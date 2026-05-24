@@ -1,0 +1,22 @@
+# Backend project config — used by pytest + ruff.
+# This file mainly exists so pytest can import the `app.*` package without
+# the developer having to set PYTHONPATH on every run.
+
+[tool.pytest.ini_options]
+# Add the backend dir (this file's location) to sys.path so `from app...` works.
+pythonpath = ["."]
+testpaths = ["tests"]
+# pytest-asyncio: treat every `async def test_*` as an asyncio test automatically.
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = [".venv", "__pycache__", ".pytest_cache"]
+
+[tool.ruff.lint]
+# Enable a sensible default set; we can tighten later.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line-too-long — handled by formatter
+]
