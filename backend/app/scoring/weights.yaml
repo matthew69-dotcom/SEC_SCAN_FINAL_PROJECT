@@ -1,0 +1,63 @@
+# Deterministic scoring rubric for the Domain Security Checker.
+#
+# How it works:
+#   - Each category has a weight_total. Sum of all category weight_totals = 100.
+#   - Each check inside a category contributes its `weight` to the category
+#     score when the check's `passed` field is True.
+#   - Checks that are emitted by a scanner but NOT listed below are treated as
+#     info-only (e.g., dns.a_record sanity) — they do not affect the score.
+#   - Checks listed below that DO NOT arrive from any scanner are treated as
+#     not-passed (earn 0). This makes incomplete coverage visible in the score.
+#
+# Grade thresholds are checked top-to-bottom; the first one whose `min` the
+# score meets wins. Keep them sorted descending.
+#
+# Edit this file to tune the rubric — no Python rebuild required.
+
+version: 1
+
+categories:
+  tls:
+    weight_total: 30
+    checks:
+      tls.cert_valid: 10           # cert presented + not expired
+      tls.modern_protocol: 8       # negotiated TLS >= 1.2
+      tls.strong_ciphers: 6        # NOT YET IMPLEMENTED — reserved for cipher enum scanner
+      tls.cert_renewal_buffer: 3   # >= 30 days remaining
+      tls.hostname_match: 3        # SAN/CN covers the queried hostname
+
+  headers:
+    weight_total: 25
+    checks:
+      headers.hsts: 6              # Strict-Transport-Security with strong max-age
+      headers.csp: 6               # Content-Security-Policy present + not blanket unsafe-inline
+      headers.frame_protection: 4  # X-Frame-Options or CSP frame-ancestors
+      headers.nosniff: 3           # X-Content-Type-Options: nosniff
+      headers.referrer_policy: 3   # Referrer-Policy set (not unsafe-url)
+      headers.permissions_policy: 3 # Permissions-Policy present
+
+  email:
+    weight_total: 25
+    checks:
+      email.spf_present: 8         # v=spf1 TXT at apex
+      email.dmarc_present: 7       # v=DMARC1 TXT at _dmarc.<domain>
+      email.spf_hardfail: 4        # SPF ends with -all
+      email.dmarc_strict_policy: 4 # DMARC p=quarantine or p=reject
+      email.dkim_detected: 2       # DKIM key found under a common selector
+
+  dns:
+    weight_total: 20
+    checks:
+      dns.dnssec: 8                # DNSKEY/RRSIG present
+      dns.caa: 5                   # CAA record restricts CA issuance
+      dns.ns_redundancy: 4         # >= 2 NS records
+      dns.wildcard_exposed: 3      # passed == True means no exposed wildcard
+
+# Grade thresholds — score >= min => grade. First match wins (descending).
+grade_thresholds:
+  - {min: 95, grade: "A+"}
+  - {min: 85, grade: "A"}
+  - {min: 75, grade: "B"}
+  - {min: 60, grade: "C"}
+  - {min: 40, grade: "D"}
+  - {min: 0,  grade: "F"}
