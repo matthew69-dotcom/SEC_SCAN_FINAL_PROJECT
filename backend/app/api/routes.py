@@ -1,13 +1,15 @@
 """HTTP endpoints.
 
-Week 4: Replaced the provisional severity-penalty scoring with the deterministic
-scoring engine (`app.scoring`). The engine loads its rubric from weights.yaml so
-the grade boundaries and per-check weights can be tuned without a code rebuild.
-Week 5 will add the AI summary on top of these findings.
+Week 4: Deterministic scoring engine from weights.yaml.
+Week 5: Added mode="full" for multi-host scanning.
+  - Discovers subdomains via crt.sh (passive CT logs) + DNS mining
+  - Scans each host with the 4 scanners, concurrency=5, timeout=20s
+  - Aggregates: domain_score = worst-host (most conservative)
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter
@@ -16,38 +18,39 @@ from app.api.schemas import (
     CategoryScore,
     CheckScoreInfo,
     Finding,
+    HostResult,
     ScanRequest,
     ScanResponse,
     VersionInfo,
 )
 from app.config import settings
+from app.discovery.enumerator import enumerate_hosts
 from app.scanners.dns_scanner import scan_dns
 from app.scanners.email_scanner import scan_email
 from app.scanners.header_scanner import scan_headers
 from app.scanners.tls_scanner import scan_tls
 from app.scoring import score_checks
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-@router.get("/health")
-def health():
-    return {"status": "ok", "version": settings.app_version}
+MAX_HOST_CONCURRENCY = 5
+HOST_SCAN_TIMEOUT = 20.0
 
 
-@router.post("/scan", response_model=ScanResponse)
-async def scan(req: ScanRequest) -> ScanResponse:
-    # Run all four scanners concurrently. return_exceptions so one failure
-    # doesn't kill the rest — we'll convert any exception into a failed check.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def _scan_single_host(domain: str) -> tuple[list, dict]:
     dns_res, tls_res, headers_res, email_res = await asyncio.gather(
-        scan_dns(req.domain),
-        scan_tls(req.domain),
-        scan_headers(req.domain),
-        scan_email(req.domain),
+        scan_dns(domain),
+        scan_tls(domain),
+        scan_headers(domain),
+        scan_email(domain),
         return_exceptions=True,
     )
-
-    all_checks = []
+    all_checks: list[dict] = []
     for res in (dns_res, tls_res, headers_res, email_res):
         if isinstance(res, list):
             all_checks.extend(res)
@@ -57,11 +60,12 @@ async def scan(req: ScanRequest) -> ScanResponse:
                 "title": "Scanner crashed", "passed": False, "severity": "low",
                 "evidence": f"{res.__class__.__name__}: {res}", "remediation": "",
             })
-
-    # Deterministic scoring — loaded from app/scoring/weights.yaml.
     score_result = score_checks(all_checks)
+    return all_checks, score_result
 
-    findings = [
+
+def _build_findings(all_checks: list[dict]) -> list[Finding]:
+    return [
         Finding(
             id=c["id"], category=c["category"], title=c["title"],
             severity=c["severity"], passed=c["passed"],
@@ -70,7 +74,9 @@ async def scan(req: ScanRequest) -> ScanResponse:
         for c in all_checks
     ]
 
-    breakdown = [
+
+def _build_breakdown(score_result: dict) -> list[CategoryScore]:
+    return [
         CategoryScore(
             name=cat["name"],  # type: ignore[arg-type]
             earned=cat["earned"],
@@ -80,24 +86,134 @@ async def scan(req: ScanRequest) -> ScanResponse:
         for cat in score_result["breakdown"]
     ]
 
-    failed = sum(1 for c in all_checks if not c["passed"])
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+def health():
+    return {"status": "ok", "version": settings.app_version}
+
+
+@router.post("/scan", response_model=ScanResponse)
+async def scan(req: ScanRequest) -> ScanResponse:
+    version = VersionInfo(
+        app=settings.app_version,
+        model=settings.openai_model,
+        rubric=1,
+    )
+
+    # ------------------------------------------------------------------
+    # mode="single" — original behaviour, unchanged
+    # ------------------------------------------------------------------
+    if req.mode == "single":
+        all_checks, score_result = await _scan_single_host(req.domain)
+        findings = _build_findings(all_checks)
+        breakdown = _build_breakdown(score_result)
+        failed = sum(1 for c in all_checks if not c["passed"])
+        summary = (
+            f"DNS + TLS + Headers + Email scan complete for {req.domain}. "
+            f"{failed} issue(s) found out of {len(all_checks)} checks. "
+            f"Score {score_result['score']}/100 -> grade {score_result['grade']}."
+        )
+        version.rubric = score_result["rubric_version"]
+        return ScanResponse(
+            scan_id=str(uuid.uuid4()),
+            domain=req.domain,
+            mode="single",
+            score=score_result["score"],
+            grade=score_result["grade"],  # type: ignore[arg-type]
+            summary=summary,
+            findings=findings,
+            breakdown=breakdown,
+            version=version,
+        )
+
+    # ------------------------------------------------------------------
+    # mode="full" — multi-host scan
+    # ------------------------------------------------------------------
+    logger.info("Starting full scan for %s", req.domain)
+    discovered = await enumerate_hosts(req.domain)
+    logger.info("Discovered %d live hosts for %s", len(discovered), req.domain)
+
+    sem = asyncio.Semaphore(MAX_HOST_CONCURRENCY)
+
+    async def _scan_host_safe(host_info) -> HostResult | None:
+        async with sem:
+            try:
+                all_checks, score_result = await asyncio.wait_for(
+                    _scan_single_host(host_info.hostname),
+                    timeout=HOST_SCAN_TIMEOUT,
+                )
+                return HostResult(
+                    host=host_info.hostname,
+                    ip=host_info.ip,
+                    score=score_result["score"],
+                    grade=score_result["grade"],  # type: ignore[arg-type]
+                    breakdown=_build_breakdown(score_result),
+                    findings=_build_findings(all_checks),
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Host scan timed out: %s", host_info.hostname)
+                return None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Host scan failed: %s — %s", host_info.hostname, exc)
+                return None
+
+    scan_tasks = [_scan_host_safe(h) for h in discovered]
+    results = await asyncio.gather(*scan_tasks)
+
+    host_results: list[HostResult] = [r for r in results if r is not None]
+    hosts_failed = len(results) - len(host_results)
+
+    if host_results:
+        worst = min(host_results, key=lambda h: h.score)
+        domain_score = worst.score
+        domain_grade = worst.grade
+        avg_score = round(sum(h.score for h in host_results) / len(host_results), 1)
+    else:
+        domain_score = 0
+        domain_grade = "F"  # type: ignore[assignment]
+        avg_score = 0.0
+
+    apex_result = next(
+        (h for h in host_results if h.host == req.domain),
+        host_results[0] if host_results else None,
+    )
+    if apex_result:
+        top_score = apex_result.score
+        top_grade = apex_result.grade
+        top_findings = apex_result.findings
+        top_breakdown = apex_result.breakdown
+    else:
+        top_score = domain_score
+        top_grade = domain_grade  # type: ignore[assignment]
+        top_findings = []
+        top_breakdown = []
+
     summary = (
-        f"DNS + TLS + Headers + Email scan complete for {req.domain}. "
-        f"{failed} issue(s) found out of {len(all_checks)} checks. "
-        f"Score {score_result['score']}/100 → grade {score_result['grade']}."
+        f"Full domain scan complete for {req.domain}. "
+        f"Discovered {len(discovered)} host(s), scanned {len(host_results)}, "
+        f"failed {hosts_failed}. "
+        f"Domain score (worst host): {domain_score}/100 -> {domain_grade}. "
+        f"Average score: {avg_score}/100."
     )
 
     return ScanResponse(
         scan_id=str(uuid.uuid4()),
         domain=req.domain,
-        score=score_result["score"],
-        grade=score_result["grade"],
+        mode="full",
+        score=top_score,
+        grade=top_grade,  # type: ignore[arg-type]
         summary=summary,
-        findings=findings,
-        breakdown=breakdown,
-        version=VersionInfo(
-            app=settings.app_version,
-            model=settings.openai_model,
-            rubric=score_result["rubric_version"],
-        ),
+        findings=top_findings,
+        breakdown=top_breakdown,
+        version=version,
+        hosts=host_results,
+        domain_score=domain_score,
+        domain_grade=domain_grade,  # type: ignore[arg-type]
+        domain_avg_score=avg_score,
+        hosts_scanned=len(host_results),
+        hosts_failed=hosts_failed,
     )
