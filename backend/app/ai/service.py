@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest import result
 
 from app.ai.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from app.ai.schemas import AIExplanation, FindingExplanation
@@ -91,15 +92,19 @@ async def _call_langchain(domain: str, score: int, grade: str, findings: list[Ch
     model = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
     chain = prompt | model | parser
 
-    result = await chain.ainvoke(
-        {
-            "domain": domain,
-            "score": score,
-            "grade": grade,
-            "findings_json": _findings_for_prompt(findings),
-            "format_instructions": parser.get_format_instructions(),
-        }
-    )
+    try:
+        result = await chain.ainvoke(
+            {
+                "domain": domain,
+                "score": score,
+                "grade": grade,
+                "findings_json": _findings_for_prompt(findings),
+                "format_instructions": parser.get_format_instructions(),
+            }
+        )
+    except Exception:
+        return None
+
     result.model_used = settings.openai_model
     result.generated_by_ai = True
     return result
