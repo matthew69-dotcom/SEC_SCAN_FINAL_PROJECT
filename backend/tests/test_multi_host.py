@@ -89,6 +89,8 @@ def test_scan_full_mode_returns_host_list():
         patch("app.api.routes.scan_tls", AsyncMock(return_value=mock_checks[1:2])),
         patch("app.api.routes.scan_headers", AsyncMock(return_value=mock_checks[2:3])),
         patch("app.api.routes.scan_email", AsyncMock(return_value=mock_checks[3:4])),
+        patch("app.api.routes.lookup_many", AsyncMock(return_value={})),
+        patch("app.api.routes.scan_ports", AsyncMock(return_value=[])),
     ):
         resp = client.post("/api/scan", json={"domain": "mfu.ac.th", "mode": "full"})
 
@@ -136,6 +138,8 @@ def test_scan_full_mode_domain_score_is_worst_host():
         patch("app.api.routes.scan_tls", side_effect=alternating_tls),
         patch("app.api.routes.scan_headers", side_effect=alternating_headers),
         patch("app.api.routes.scan_email", side_effect=alternating_email),
+        patch("app.api.routes.lookup_many", AsyncMock(return_value={})),
+        patch("app.api.routes.scan_ports", AsyncMock(return_value=[])),
     ):
         resp = client.post("/api/scan", json={"domain": "mfu.ac.th", "mode": "full"})
 
@@ -169,6 +173,8 @@ def test_scan_full_mode_counts_failed_hosts():
         patch("app.api.routes.scan_tls", AsyncMock(return_value=mock_checks[1:2])),
         patch("app.api.routes.scan_headers", AsyncMock(return_value=mock_checks[2:3])),
         patch("app.api.routes.scan_email", AsyncMock(return_value=mock_checks[3:4])),
+        patch("app.api.routes.lookup_many", AsyncMock(return_value={})),
+        patch("app.api.routes.scan_ports", AsyncMock(return_value=[])),
     ):
         resp = client.post("/api/scan", json={"domain": "mfu.ac.th", "mode": "full"})
 
@@ -201,6 +207,8 @@ def test_scan_full_mode_summary_mentions_hosts():
         patch("app.api.routes.scan_tls", AsyncMock(return_value=mock_checks[1:2])),
         patch("app.api.routes.scan_headers", AsyncMock(return_value=mock_checks[2:3])),
         patch("app.api.routes.scan_email", AsyncMock(return_value=mock_checks[3:4])),
+        patch("app.api.routes.lookup_many", AsyncMock(return_value={})),
+        patch("app.api.routes.scan_ports", AsyncMock(return_value=[])),
     ):
         resp = client.post("/api/scan", json={"domain": "mfu.ac.th", "mode": "full"})
 

@@ -165,6 +165,7 @@ async def test_enumerate_hosts_dedupes_and_filters_wildcards():
     with (
         patch("app.discovery.enumerator.fetch_crtsh_subdomains", AsyncMock(return_value=crtsh_set)),
         patch("app.discovery.enumerator.mine_dns_subdomains", AsyncMock(return_value=dns_set)),
+        patch("app.discovery.enumerator.brute_force", AsyncMock(return_value=set())),
         patch("app.discovery.enumerator.dns.asyncresolver.Resolver") as MockResolver,
     ):
         mock_r = AsyncMock()
@@ -195,6 +196,7 @@ async def test_enumerate_hosts_filters_dead_hosts():
     with (
         patch("app.discovery.enumerator.fetch_crtsh_subdomains", AsyncMock(return_value=crtsh_set)),
         patch("app.discovery.enumerator.mine_dns_subdomains", AsyncMock(return_value=set())),
+        patch("app.discovery.enumerator.brute_force", AsyncMock(return_value=set())),
         patch("app.discovery.enumerator.dns.asyncresolver.Resolver") as MockResolver,
     ):
         mock_r = AsyncMock()
@@ -213,6 +215,7 @@ async def test_enumerate_hosts_includes_apex():
     with (
         patch("app.discovery.enumerator.fetch_crtsh_subdomains", AsyncMock(return_value=set())),
         patch("app.discovery.enumerator.mine_dns_subdomains", AsyncMock(return_value=set())),
+        patch("app.discovery.enumerator.brute_force", AsyncMock(return_value=set())),
         patch("app.discovery.enumerator.dns.asyncresolver.Resolver") as MockResolver,
     ):
         mock_r = AsyncMock()
