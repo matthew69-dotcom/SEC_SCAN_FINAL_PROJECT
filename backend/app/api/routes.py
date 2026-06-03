@@ -2,9 +2,13 @@
 
 Week 4: Deterministic scoring engine from weights.yaml.
 Week 5: Added mode="full" for multi-host scanning.
-  - Discovers subdomains via crt.sh (passive CT logs) + DNS mining
+  - Discovers subdomains via crt.sh (passive CT logs) + DNS mining + wordlist brute-force
   - Scans each host with the 4 scanners, concurrency=5, timeout=20s
   - Aggregates: domain_score = worst-host (most conservative)
+Week 6 (backend tasks):
+  - Geo-IP lookup per host (ip-api.com)
+  - Real port scanning per host (80/443/8080/8443/8000/3000)
+  - W6 AI integration point (Role B plugs in ai/analyzer.py)
 """
 from __future__ import annotations
 
@@ -29,7 +33,9 @@ from app.scanners.dns_scanner import scan_dns
 from app.scanners.email_scanner import scan_email
 from app.scanners.header_scanner import scan_headers
 from app.scanners.tls_scanner import scan_tls
+from app.scanners.port_scanner import scan_ports, open_port_numbers
 from app.scoring import score_checks
+from app.utils.geoip import lookup_many
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -167,6 +173,23 @@ async def scan(req: ScanRequest) -> ScanResponse:
     host_results: list[HostResult] = [r for r in results if r is not None]
     hosts_failed = len(results) - len(host_results)
 
+    # Geo-IP: lookup all IPs concurrently
+    ips = [h.ip for h in host_results if h.ip]
+    geo_map = await lookup_many(ips)
+    for hr in host_results:
+        geo = geo_map.get(hr.ip)
+        if geo:
+            hr.location = geo.location
+            hr.isp = geo.isp
+            hr.asn = geo.asn
+
+    # Port scan: run concurrently across all hosts
+    port_scan_tasks = [scan_ports(hr.host) for hr in host_results]
+    port_scan_results = await asyncio.gather(*port_scan_tasks, return_exceptions=True)
+    for hr, port_res in zip(host_results, port_scan_results):
+        if isinstance(port_res, list):
+            hr.open_ports = open_port_numbers(port_res)
+
     if host_results:
         worst = min(host_results, key=lambda h: h.score)
         domain_score = worst.score
@@ -200,6 +223,25 @@ async def scan(req: ScanRequest) -> ScanResponse:
         f"Average score: {avg_score}/100."
     )
 
+    # W6: AI Risk Analyzer integration point (Role B implements ai/analyzer.py)
+    ai_summary = None
+    if apex_result:
+        try:
+            from app.ai.analyzer import analyze_findings  # noqa: PLC0415
+            apex_checks = [f.model_dump() for f in (apex_result.findings if apex_result else [])]
+            ai_summary = await analyze_findings(apex_checks, {
+                "score": top_score,
+                "grade": top_grade,
+                "domain": req.domain,
+                "hosts_scanned": len(host_results),
+                "domain_score": domain_score,
+                "domain_grade": domain_grade,
+            })
+        except ImportError:
+            pass  # W6 not yet implemented — skip silently
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AI analyzer failed: %s", exc)
+
     return ScanResponse(
         scan_id=str(uuid.uuid4()),
         domain=req.domain,
@@ -216,4 +258,5 @@ async def scan(req: ScanRequest) -> ScanResponse:
         domain_avg_score=avg_score,
         hosts_scanned=len(host_results),
         hosts_failed=hosts_failed,
+        ai_summary=ai_summary,
     )

@@ -69,6 +69,12 @@ class HostResult(BaseModel):
     grade: Grade
     breakdown: list[CategoryScore] = []
     findings: list[Finding] = []
+    # Geo-IP (W6+)
+    location: str | None = None
+    isp: str | None = None
+    asn: str | None = None
+    # Port scan (W6+)
+    open_ports: list[int] = []
 
 
 class ScanResponse(BaseModel):
@@ -91,3 +97,6 @@ class ScanResponse(BaseModel):
     domain_avg_score: float | None = None
     hosts_scanned: int = 0
     hosts_failed: int = 0
+    # --- W6: AI Risk Analyzer (Role B) ---
+    ai_summary: dict | None = None
+    # shape: {"risk_summary": str, "top_issues": [str], "positive_findings": [str]}
