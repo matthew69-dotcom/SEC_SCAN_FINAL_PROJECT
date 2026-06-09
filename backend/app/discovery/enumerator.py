@@ -23,6 +23,7 @@ import dns.exception
 
 from app.discovery.crtsh import fetch_crtsh_subdomains
 from app.discovery.dns_mining import mine_dns_subdomains
+from app.discovery.wordlist import brute_force
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +70,17 @@ async def enumerate_hosts(domain: str) -> list[DiscoveredHost]:
         Sorted list of resolvable hosts.  Always includes the apex itself
         (if it has an A record).  Never raises.
     """
-    # 1. Gather from all sources concurrently
-    crtsh_results, dns_results = await asyncio.gather(
+    # 1. Gather from all sources concurrently (crt.sh + DNS mining + wordlist)
+    crtsh_results, dns_results, wordlist_results = await asyncio.gather(
         fetch_crtsh_subdomains(domain),
         mine_dns_subdomains(domain),
+        brute_force(domain),
         return_exceptions=True,
     )
 
     candidates: set[str] = {domain}  # always include apex
 
-    for result in (crtsh_results, dns_results):
+    for result in (crtsh_results, dns_results, wordlist_results):
         if isinstance(result, set):
             candidates |= result
         elif isinstance(result, Exception):
