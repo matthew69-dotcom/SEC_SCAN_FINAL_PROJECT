@@ -1,0 +1,16 @@
+# Versions chosen to have prebuilt wheels for Python 3.12 AND 3.13.
+fastapi>=0.115.6
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.4
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.1
+httpx>=0.28.1
+dnspython>=2.7.0
+cryptography>=44.0.0
+pyyaml>=6.0.2
+slowapi>=0.1.9
+# Dev
+pytest>=8.3.4
+pytest-asyncio>=0.24.0
+ruff>=0.8.4
+# NOTE: langchain + langchain-openai + sqlalchemy + asyncpg added Week 5/7.
