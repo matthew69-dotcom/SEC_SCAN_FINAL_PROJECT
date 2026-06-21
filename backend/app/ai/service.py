@@ -1,9 +1,8 @@
-"""AI report generation service."""
+﻿"""AI report generation service."""
 from __future__ import annotations
 
 import json
 from typing import Any
-from unittest import result
 
 from app.ai.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from app.ai.schemas import AIExplanation, FindingExplanation
