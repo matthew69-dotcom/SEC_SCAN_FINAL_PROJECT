@@ -2,33 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=Inter:wght@400;500;600;700&display=swap');
 
-html {
-  scroll-behavior: smooth;
-}
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
   min-width: 320px;
-  background: #080a10;
+  background: #06080f;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
+/* ── scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #06080f; }
+::-webkit-scrollbar-thumb { background: #1e2535; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #2f3a50; }
+
+/* ── mono font util ── */
+.font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; }
+
+/* ── dot grid background ── */
+.bg-dot-grid {
+  background-image: radial-gradient(circle, #1a2235 1px, transparent 1px);
+  background-size: 28px 28px;
 }
 
-::-webkit-scrollbar-track {
-  background: #080a10;
+/* ── scan line animation for scanning page ── */
+@keyframes scanline {
+  0%   { transform: translateY(-100%); opacity: 0.6; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+.scanline {
+  position: fixed; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, #22d3ee55, #22d3ee, #22d3ee55, transparent);
+  animation: scanline 2.8s linear infinite;
+  pointer-events: none; z-index: 0;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #2f3545;
-  border-radius: 999px;
+/* ── pulse ring ── */
+@keyframes ping-slow {
+  0%   { transform: scale(1); opacity: 0.6; }
+  70%  { transform: scale(1.8); opacity: 0; }
+  100% { transform: scale(1.8); opacity: 0; }
 }
+.ping-slow { animation: ping-slow 2.2s cubic-bezier(0,0,0.2,1) infinite; }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+/* ── fade-up page enter ── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+.fade-up { animation: fade-up 0.35s ease both; }
+
+/* ── severity badge pill ── */
+.sev-critical { @apply border-red-500/40 bg-red-500/10 text-red-300; }
+.sev-high     { @apply border-orange-500/40 bg-orange-500/10 text-orange-300; }
+.sev-medium   { @apply border-yellow-500/40 bg-yellow-500/10 text-yellow-300; }
+.sev-low      { @apply border-blue-500/40 bg-blue-500/10 text-blue-300; }
+.sev-info     { @apply border-emerald-500/40 bg-emerald-500/10 text-emerald-300; }
