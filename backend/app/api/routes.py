@@ -8,7 +8,7 @@ Week 5: Added mode="full" for multi-host scanning.
 Week 6 (backend tasks):
   - Geo-IP lookup per host (ip-api.com)
   - Real port scanning per host (80/443/8080/8443/8000/3000)
-  - W6 AI integration point (Role B plugs in ai/analyzer.py)
+  - AI integration point (Role B plugs in ai/analyzer.py)
 """
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ async def scan(req: ScanRequest) -> ScanResponse:
     )
 
     # ------------------------------------------------------------------
-    # mode="single" — original behaviour, unchanged
+    # mode="single" — scan only the requested domain
     # ------------------------------------------------------------------
     if req.mode == "single":
         all_checks, score_result = await _scan_single_host(req.domain)
@@ -223,12 +223,12 @@ async def scan(req: ScanRequest) -> ScanResponse:
         f"Average score: {avg_score}/100."
     )
 
-    # W6: AI Risk Analyzer integration point (Role B implements ai/analyzer.py)
+    # AI Risk Analyzer integration point (Role B implements ai/analyzer.py)
     ai_summary = None
     if apex_result:
         try:
             from app.ai.analyzer import analyze_findings  # noqa: PLC0415
-            apex_checks = [f.model_dump() for f in (apex_result.findings if apex_result else [])]
+            apex_checks = [f.model_dump() for f in apex_result.findings]
             ai_summary = await analyze_findings(apex_checks, {
                 "score": top_score,
                 "grade": top_grade,
@@ -238,10 +238,11 @@ async def scan(req: ScanRequest) -> ScanResponse:
                 "domain_grade": domain_grade,
             })
         except ImportError:
-            pass  # W6 not yet implemented — skip silently
+            pass  # ai/analyzer.py not yet implemented — skip silently
         except Exception as exc:  # noqa: BLE001
             logger.warning("AI analyzer failed: %s", exc)
 
+    version.rubric = 1
     return ScanResponse(
         scan_id=str(uuid.uuid4()),
         domain=req.domain,
