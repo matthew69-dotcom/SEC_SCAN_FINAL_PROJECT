@@ -535,6 +535,7 @@ function ResultPage({
     status: "active" | "unresolved";
     port80: boolean;
     port443: boolean;
+    openPorts: number[];
     webResponse: string;
     location: string;
     ispAsn: string;
@@ -548,19 +549,26 @@ function ResultPage({
   let ipRows: IPRow[];
 
   if (result.mode === "full" && hosts.length > 0) {
-    ipRows = hosts.map(h => ({
-      ip:            h.ip,
-      hostname:      h.host,
-      status:        "active" as const,
-      port80:        true,
-      port443:       h.findings.some(f => f.id === "tls.handshake" && f.passed),
-      webResponse:   h.findings.some(f => f.id === "tls.handshake" && f.passed) ? "200 HTTPS" : "200 HTTP",
-      location:      "—",
-      ispAsn:        "—",
-      score:         h.score,
-      grade:         h.grade,
-      findingsCount: h.findings.length,
-    }));
+    ipRows = hosts.map(h => {
+      const ports = h.open_ports ?? [];
+      const ispAsn = [h.isp, h.asn].filter(Boolean).join(" · ") || "—";
+      const httpsUp = ports.includes(443) || h.findings.some(f => f.id === "tls.handshake" && f.passed);
+      const httpUp  = ports.includes(80);
+      return {
+        ip:            h.ip,
+        hostname:      h.host,
+        status:        "active" as const,
+        port80:        httpUp || ports.length === 0,
+        port443:       httpsUp,
+        openPorts:     ports,
+        webResponse:   httpsUp ? "200 HTTPS" : "200 HTTP",
+        location:      h.location || "—",
+        ispAsn,
+        score:         h.score,
+        grade:         h.grade,
+        findingsCount: h.findings.length,
+      };
+    });
   } else {
     const parsedIPs = parseARecordIPs(result.findings);
     const fallbackIPs = parsedIPs.length > 0 ? parsedIPs : [];
@@ -570,6 +578,7 @@ function ResultPage({
       status:      "active" as const,
       port80:      webResponds,
       port443:     port443Open,
+      openPorts:   [...(webResponds ? [80] : []), ...(port443Open ? [443] : [])],
       webResponse: httpStatus,
       location:    "—",
       ispAsn:      "—",
@@ -653,6 +662,52 @@ function ResultPage({
               <div>
                 <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-cyan-400/60">AI Security Summary</p>
                 <p className="text-sm leading-relaxed text-slate-400">{result.summary}</p>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {result.ai_summary && (
+          <Card glow="cyan" className="mb-8 p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-cyan-500/30 bg-cyan-500/10 font-mono text-xs font-bold text-cyan-400">
+                AI
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-cyan-400/60">AI Risk Analysis</p>
+                <p className="text-sm leading-relaxed text-slate-300">{result.ai_summary.risk_summary}</p>
+
+                {result.ai_summary.top_issues.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-orange-400/70">
+                      <span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> Top Issues
+                    </p>
+                    <ul className="space-y-1.5">
+                      {result.ai_summary.top_issues.map((issue, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-slate-400">
+                          <span className="mt-1 text-orange-500">▸</span>
+                          <span>{issue}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {result.ai_summary.positive_findings.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-400/70">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Done Well
+                    </p>
+                    <ul className="space-y-1.5">
+                      {result.ai_summary.positive_findings.map((good, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-slate-400">
+                          <span className="mt-0.5 text-emerald-500">✓</span>
+                          <span>{good}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -806,13 +861,22 @@ function ResultPage({
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex gap-1 flex-wrap">
-                              {row.port80 && (
-                                <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 font-mono text-[10px] text-blue-300">80</span>
-                              )}
-                              {row.port443 && (
-                                <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-mono text-[10px] text-violet-300">443</span>
-                              )}
-                              {!row.port80 && !row.port443 && (
+                              {row.openPorts.length > 0 ? (
+                                row.openPorts.map(p => (
+                                  <span
+                                    key={p}
+                                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                                      p === 443
+                                        ? "border-violet-500/30 bg-violet-500/10 text-violet-300"
+                                        : p === 80
+                                        ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                                        : "border-slate-500/30 bg-slate-500/10 text-slate-300"
+                                    }`}
+                                  >
+                                    {p}
+                                  </span>
+                                ))
+                              ) : (
                                 <span className="font-mono text-xs text-slate-600">—</span>
                               )}
                             </div>

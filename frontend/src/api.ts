@@ -36,6 +36,18 @@ export interface HostResult {
   grade: Grade;
   breakdown: CategoryScore[];
   findings: Finding[];
+  // Geo-IP (populated by backend in mode="full")
+  location: string | null;
+  isp: string | null;
+  asn: string | null;
+  // Port scan (populated by backend in mode="full")
+  open_ports: number[];
+}
+
+export interface AiSummary {
+  risk_summary: string;
+  top_issues: string[];
+  positive_findings: string[];
 }
 
 export interface VersionInfo {
@@ -61,6 +73,8 @@ export interface ScanResponse {
   domain_avg_score: number | null;
   hosts_scanned: number;
   hosts_failed: number;
+  // AI Risk Analyzer output (mode="full", null if OPENAI_API_KEY unset)
+  ai_summary: AiSummary | null;
   scanned_at: string; // injected client-side
 }
 
@@ -88,6 +102,7 @@ export async function scanDomain(
     domain_avg_score: null,
     hosts_scanned: 0,
     hosts_failed: 0,
+    ai_summary: null,
     ...data,
     scanned_at: new Date().toISOString(),
   } as ScanResponse;
