@@ -13,4 +13,9 @@ slowapi>=0.1.9
 pytest>=8.3.4
 pytest-asyncio>=0.24.0
 ruff>=0.8.4
-# NOTE: langchain + langchain-openai + sqlalchemy + asyncpg added Week 5/7.
+# AI (Week 6) — required for the AI Risk Analyzer.
+# Without these, AI silently falls back to a local template (generated_by_ai=False).
+langchain>=0.3
+langchain-openai>=0.2
+langchain-core>=0.3
+# NOTE: sqlalchemy + asyncpg to be added Week 7 (PostgreSQL — Role C).
