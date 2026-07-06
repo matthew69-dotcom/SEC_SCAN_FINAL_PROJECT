@@ -16,17 +16,21 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     CategoryScore,
     CheckScoreInfo,
     Finding,
     HostResult,
+    ScanHistoryItem,
     ScanRequest,
     ScanResponse,
     VersionInfo,
 )
+from app.db import crud
+from app.db.database import get_session
 from app.config import settings
 from app.discovery.enumerator import enumerate_hosts
 from app.scanners.dns_scanner import scan_dns
@@ -97,13 +101,33 @@ def _build_breakdown(score_result: dict) -> list[CategoryScore]:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+async def _save_scan(session: AsyncSession, resp: ScanResponse) -> None:
+    """Persist a scan result. Never raises — a DB failure must not fail the scan."""
+    try:
+        await crud.create_scan(
+            session,
+            scan_id=resp.scan_id,
+            domain=resp.domain,
+            mode=resp.mode,
+            score=resp.score,
+            grade=resp.grade,
+            findings_count=len(resp.findings),
+            result_json=resp.model_dump(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to persist scan %s: %s", resp.scan_id, exc)
+
+
 @router.get("/health")
 def health():
     return {"status": "ok", "version": settings.app_version}
 
 
 @router.post("/scan", response_model=ScanResponse)
-async def scan(req: ScanRequest) -> ScanResponse:
+async def scan(
+    req: ScanRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ScanResponse:
     version = VersionInfo(
         app=settings.app_version,
         model=settings.openai_model,
@@ -124,7 +148,7 @@ async def scan(req: ScanRequest) -> ScanResponse:
             f"Score {score_result['score']}/100 -> grade {score_result['grade']}."
         )
         version.rubric = score_result["rubric_version"]
-        return ScanResponse(
+        resp = ScanResponse(
             scan_id=str(uuid.uuid4()),
             domain=req.domain,
             mode="single",
@@ -135,6 +159,8 @@ async def scan(req: ScanRequest) -> ScanResponse:
             breakdown=breakdown,
             version=version,
         )
+        await _save_scan(session, resp)
+        return resp
 
     # ------------------------------------------------------------------
     # mode="full" — multi-host scan
@@ -243,7 +269,7 @@ async def scan(req: ScanRequest) -> ScanResponse:
             logger.warning("AI analyzer failed: %s", exc)
 
     version.rubric = 1
-    return ScanResponse(
+    resp = ScanResponse(
         scan_id=str(uuid.uuid4()),
         domain=req.domain,
         mode="full",
@@ -261,3 +287,53 @@ async def scan(req: ScanRequest) -> ScanResponse:
         hosts_failed=hosts_failed,
         ai_summary=ai_summary,
     )
+    await _save_scan(session, resp)
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Scan history (Week 7 — persisted in the database)
+# ---------------------------------------------------------------------------
+
+@router.get("/scans", response_model=list[ScanHistoryItem])
+async def list_scan_history(
+    session: AsyncSession = Depends(get_session),
+) -> list[ScanHistoryItem]:
+    """Most recent scans (newest first)."""
+    records = await crud.list_scans(session)
+    return [
+        ScanHistoryItem(
+            scan_id=r.scan_id,
+            domain=r.domain,
+            mode=r.mode,  # type: ignore[arg-type]
+            score=r.score,
+            grade=r.grade,  # type: ignore[arg-type]
+            findings_count=r.findings_count,
+            created_at=r.created_at,
+        )
+        for r in records
+    ]
+
+
+@router.get("/scans/{scan_id}", response_model=ScanResponse)
+async def get_scan_history(
+    scan_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> ScanResponse:
+    """Full stored result for one scan."""
+    record = await crud.get_scan(session, scan_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return record.result_json
+
+
+@router.delete("/scans/{scan_id}")
+async def delete_scan_history(
+    scan_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete one stored scan."""
+    deleted = await crud.delete_scan(session, scan_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return {"deleted": scan_id}

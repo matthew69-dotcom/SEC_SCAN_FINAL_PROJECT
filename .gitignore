@@ -67,3 +67,8 @@ backend/package-lock.json
 scan_output/
 .tmp/
 *.zip
+
+# Local SQLite database (Week 7 dev DB)
+dev.db
+*.sqlite3
+backend/*.db

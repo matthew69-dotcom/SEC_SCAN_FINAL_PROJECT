@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
-import { scanDomain, type ScanResponse, type Finding, type Severity, type Grade, type HostResult } from "./api";
+import { scanDomain, listScans, getScan, deleteScan, type ScanResponse, type Finding, type Severity, type Grade, type HostResult, type ScanHistoryItem } from "./api";
 
 // ─────────────────────────── constants / helpers ────────────────────────────
 
@@ -77,7 +77,7 @@ function fmtDate(iso: string) {
   catch { return iso; }
 }
 
-// ─────────────────────────── localStorage history ────────────────────────────
+// ─────────────────────────── scan history (server DB) ────────────────────────
 
 interface HistoryEntry {
   scan_id: string;
@@ -89,23 +89,16 @@ interface HistoryEntry {
   mode: "single" | "full";
 }
 
-function loadHistory(): HistoryEntry[] {
-  try { return JSON.parse(localStorage.getItem("sec_scan_history") ?? "[]"); }
-  catch { return []; }
-}
-
-function saveHistory(entry: HistoryEntry) {
-  try {
-    const prev = loadHistory().filter(h => h.scan_id !== entry.scan_id);
-    localStorage.setItem("sec_scan_history", JSON.stringify([entry, ...prev].slice(0, 20)));
-  } catch { /* ignore */ }
-}
-
-function deleteHistory(scan_id: string) {
-  try {
-    const next = loadHistory().filter(h => h.scan_id !== scan_id);
-    localStorage.setItem("sec_scan_history", JSON.stringify(next));
-  } catch { /* ignore */ }
+function itemToEntry(it: ScanHistoryItem): HistoryEntry {
+  return {
+    scan_id: it.scan_id,
+    domain: it.domain,
+    score: it.score,
+    grade: it.grade,
+    scanned_at: it.created_at,
+    findings_count: it.findings_count,
+    mode: it.mode,
+  };
 }
 
 // ═══════════════════════════ shared UI pieces ═════════════════════════════
@@ -890,7 +883,9 @@ function ResultPage({
                               {row.webResponse}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-500">{row.location}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-slate-500">
+                            {row.location && row.location !== "—" ? `≈ ${row.location}` : row.location}
+                          </td>
                           <td className="px-4 py-3 font-mono text-xs text-slate-500">{row.ispAsn}</td>
                           {result.mode === "full" && (
                             <>
@@ -920,6 +915,15 @@ function ResultPage({
                   <p className="font-mono text-[10px] text-slate-700">
                     ⓘ Location and ISP/ASN data require a geo-IP lookup service not yet integrated into the backend.
                     Port 80/443 status and web response are derived from the TLS and HTTP header scanner results.
+                  </p>
+                </div>
+              )}
+              {result.mode === "full" && (
+                <div className="border-t border-surface-border px-5 py-3">
+                  <p className="font-mono text-[10px] text-slate-700">
+                    ⓘ Location is approximate (≈) — derived from IP geolocation (ip-api.com), which reflects the
+                    registered network location, not the physical server. Country and ISP/ASN are reliable; city may
+                    be off, and sites behind a CDN (e.g. Cloudflare) show the CDN edge rather than the origin server.
                   </p>
                 </div>
               )}
@@ -1015,22 +1019,14 @@ function FindingRow({ finding }: { finding: Finding }) {
 // ═══════════════════════════ History page ════════════════════════════════
 
 function HistoryPage({
-  onViewEntry, onNewScan,
+  history, onView, onDelete, onClear, onNewScan,
 }: {
-  onViewEntry: (e: HistoryEntry) => void;
+  history: HistoryEntry[];
+  onView: (e: HistoryEntry) => void;
+  onDelete: (scan_id: string) => void;
+  onClear: () => void;
   onNewScan: () => void;
 }) {
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-
-  useEffect(() => {
-    setHistory(loadHistory());
-  }, []);
-
-  function handleDelete(scan_id: string) {
-    deleteHistory(scan_id);
-    setHistory(loadHistory());
-  }
-
   return (
     <div className="fade-up min-h-screen bg-[#06080f] pb-20">
       <div className="pointer-events-none fixed inset-0 bg-dot-grid opacity-25" />
@@ -1038,17 +1034,12 @@ function HistoryPage({
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
             <SectionTitle>Scan History</SectionTitle>
-            <p className="font-mono text-xs text-slate-600">Results stored locally in your browser</p>
+            <p className="font-mono text-xs text-slate-600">Results stored on the server</p>
           </div>
           <div className="flex gap-2">
             {history.length > 0 && (
               <button
-                onClick={() => {
-                  if (confirm("Clear all history?")) {
-                    localStorage.removeItem("sec_scan_history");
-                    setHistory([]);
-                  }
-                }}
+                onClick={() => { if (confirm("Clear all history?")) onClear(); }}
                 className="rounded-lg border border-surface-border px-3 py-1.5 font-mono text-xs text-slate-600 hover:text-red-400 transition"
               >
                 Clear All
@@ -1081,15 +1072,15 @@ function HistoryPage({
                 key={entry.scan_id}
                 entry={entry}
                 rank={i + 1}
-                onView={onViewEntry}
-                onDelete={() => handleDelete(entry.scan_id)}
+                onView={onView}
+                onDelete={() => onDelete(entry.scan_id)}
               />
             ))}
           </div>
         )}
 
         <p className="mt-8 text-center font-mono text-[10px] text-slate-700">
-          Up to 20 entries · data never leaves your browser
+          Stored on the server · up to 50 recent scans
         </p>
       </div>
     </div>
@@ -1204,9 +1195,17 @@ export default function App() {
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState(0);
-  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const timerRef = useRef<number | undefined>(undefined);
+
+  const refreshHistory = async () => {
+    try { setHistory((await listScans()).map(itemToEntry)); }
+    catch { /* server history unavailable */ }
+  };
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- async load on mount; setState runs after await
+  useEffect(() => { refreshHistory(); }, []);
 
   async function onScan(e: FormEvent) {
     e.preventDefault();
@@ -1248,17 +1247,8 @@ export default function App() {
 
       setResult(data);
 
-      const entry: HistoryEntry = {
-        scan_id:        data.scan_id,
-        domain:         data.domain,
-        score:          data.score,
-        grade:          data.grade,
-        scanned_at:     data.scanned_at,
-        findings_count: data.findings.length,
-        mode:           data.mode,
-      };
-      saveHistory(entry);
-      setHistory(loadHistory());
+      // Backend already persisted this scan — refresh the list from the server.
+      refreshHistory();
 
       setPageView("result");
     } catch (err) {
@@ -1270,17 +1260,34 @@ export default function App() {
     }
   }
 
-  function handleViewHistory(entry: HistoryEntry) {
+  async function handleViewHistory(entry: HistoryEntry) {
     if (result && result.scan_id === entry.scan_id) {
       setPageView("result");
       return;
     }
-    setDomain(entry.domain);
-    setPageView("dashboard");
+    try {
+      const full = await getScan(entry.scan_id);
+      setResult({ ...full, scanned_at: entry.scanned_at });
+      setPageView("result");
+    } catch {
+      setError("Could not load that scan from the server.");
+      setPageView("dashboard");
+    }
+  }
+
+  async function handleDeleteHistory(scan_id: string) {
+    try { await deleteScan(scan_id); } catch { /* ignore */ }
+    refreshHistory();
+  }
+
+  async function handleClearHistory() {
+    try { await Promise.all(history.map(h => deleteScan(h.scan_id))); } catch { /* ignore */ }
+    refreshHistory();
   }
 
   function handlePageNav(p: PageView) {
     if (p === "result" && !result) return;
+    if (p === "history") refreshHistory();
     setPageView(p);
   }
 
@@ -1301,7 +1308,7 @@ export default function App() {
           loading={loading}
           error={error}
           recentHistory={history}
-          onViewHistory={(e) => { setDomain(e.domain); setPageView("dashboard"); }}
+          onViewHistory={handleViewHistory}
           scanMode={scanMode}
           setScanMode={setScanMode}
         />
@@ -1320,7 +1327,10 @@ export default function App() {
 
       {pageView === "history" && (
         <HistoryPage
-          onViewEntry={handleViewHistory}
+          history={history}
+          onView={handleViewHistory}
+          onDelete={handleDeleteHistory}
+          onClear={handleClearHistory}
           onNewScan={() => setPageView("dashboard")}
         />
       )}

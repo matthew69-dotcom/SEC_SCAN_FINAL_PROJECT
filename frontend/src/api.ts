@@ -107,3 +107,49 @@ export async function scanDomain(
     scanned_at: new Date().toISOString(),
   } as ScanResponse;
 }
+
+// ─────────────────────────── scan history (server DB) ───────────────────────
+
+export interface ScanHistoryItem {
+  scan_id: string;
+  domain: string;
+  mode: ScanMode;
+  score: number;
+  grade: Grade;
+  findings_count: number;
+  created_at: string;
+}
+
+function withFallbacks(data: Record<string, unknown>): ScanResponse {
+  return {
+    hosts: [],
+    domain_score: null,
+    domain_grade: null,
+    domain_avg_score: null,
+    hosts_scanned: 0,
+    hosts_failed: 0,
+    ai_summary: null,
+    ...data,
+    scanned_at: new Date().toISOString(),
+  } as unknown as ScanResponse;
+}
+
+// List recent scans (newest first).
+export async function listScans(): Promise<ScanHistoryItem[]> {
+  const res = await fetch("/api/scans");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Fetch one stored scan's full result.
+export async function getScan(scanId: string): Promise<ScanResponse> {
+  const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return withFallbacks(await res.json());
+}
+
+// Delete one stored scan.
+export async function deleteScan(scanId: string): Promise<void> {
+  const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}

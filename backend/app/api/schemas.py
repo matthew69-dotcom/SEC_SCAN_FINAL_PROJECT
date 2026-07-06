@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -103,3 +104,14 @@ class ScanResponse(BaseModel):
     # AI Risk Analyzer output
     ai_summary: dict | None = None
     # shape: {"risk_summary": str, "top_issues": [str], "positive_findings": [str]}
+
+
+class ScanHistoryItem(BaseModel):
+    """Lightweight row for the history list (GET /api/scans)."""
+    scan_id: str
+    domain: str
+    mode: Literal["single", "full"]
+    score: int
+    grade: Grade
+    findings_count: int
+    created_at: datetime
