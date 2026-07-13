@@ -72,3 +72,4 @@ scan_output/
 dev.db
 *.sqlite3
 backend/*.db
+_smoke.db*
