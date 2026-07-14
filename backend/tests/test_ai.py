@@ -1,5 +1,14 @@
+import pytest
+
 from app.ai import explain_scan
 from app.scanners.base import CheckResult
+
+
+@pytest.fixture(autouse=True)
+def _force_fallback(monkeypatch):
+    """These tests verify the LOCAL FALLBACK path. Blank out the API key so
+    they behave the same whether or not the developer has a real key in .env."""
+    monkeypatch.setattr("app.ai.service.settings.openai_api_key", "")
 
 
 def _finding(check_id: str, passed: bool, severity: str = "high") -> CheckResult:
