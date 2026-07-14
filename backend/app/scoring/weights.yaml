@@ -22,7 +22,7 @@ categories:
     checks:
       tls.cert_valid: 10           # cert presented + not expired
       tls.modern_protocol: 8       # negotiated TLS >= 1.2
-      tls.strong_ciphers: 6        # NOT YET IMPLEMENTED — reserved for cipher enum scanner
+      tls.strong_ciphers: 6        # negotiated suite is AEAD + forward secrecy, no legacy algos
       tls.cert_renewal_buffer: 3   # >= 30 days remaining
       tls.hostname_match: 3        # SAN/CN covers the queried hostname
 

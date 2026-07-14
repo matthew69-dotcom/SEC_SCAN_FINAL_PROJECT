@@ -6,10 +6,12 @@ Checks:
 - Certificate has >=30 days remaining (renewal buffer)
 - Hostname matches the cert (SAN or CN)
 - TLS protocol version negotiated is >= 1.2 (no 1.0/1.1)
+- Negotiated cipher suite is strong (AEAD + forward secrecy, no legacy algos)
 
-Notes for Week 2:
-- Does NOT enumerate ciphers (would need probing each cipher; deferred to a later
-  iteration). For now we trust the negotiated protocol as a strong signal.
+Notes:
+- Cipher judgement is based on the suite negotiated in the single observation
+  handshake (the server's preferred suite for a modern client) — we do NOT
+  probe every cipher individually, keeping the scan lightweight and passive.
 - All blocking socket work is offloaded to a thread with asyncio.to_thread so we
   don't stall the event loop.
 """
@@ -37,7 +39,34 @@ def _connect_and_inspect(host: str, port: int = 443, timeout: float = 8.0) -> di
         with ctx.wrap_socket(sock, server_hostname=host) as ssock:
             cert_der = ssock.getpeercert(binary_form=True)
             protocol = ssock.version()
-            return {"cert_der": cert_der, "protocol": protocol}
+            cipher = ssock.cipher()  # (name, protocol, secret_bits) or None
+            return {"cert_der": cert_der, "protocol": protocol, "cipher": cipher}
+
+
+# Substrings that mark a cipher suite as legacy/broken regardless of anything else.
+_WEAK_CIPHER_MARKERS = ("RC4", "3DES", "DES-", "NULL", "EXPORT", "MD5", "ANON")
+
+
+def _judge_cipher(protocol: str, name: str | None, bits: int | None) -> tuple[bool, str]:
+    """Pure rule: is the negotiated cipher suite strong? Returns (passed, reason)."""
+    if not name:
+        return False, "cipher suite could not be determined"
+    upper = name.upper()
+    for marker in _WEAK_CIPHER_MARKERS:
+        if marker in upper:
+            return False, f"legacy algorithm in suite ({marker.rstrip('-')})"
+    if bits is not None and bits < 128:
+        return False, f"key strength below 128 bits ({bits})"
+    if protocol == "TLSv1.3":
+        # TLS 1.3 only defines AEAD suites with forward secrecy.
+        return True, "TLS 1.3 AEAD suite"
+    aead = any(m in upper for m in ("GCM", "CHACHA20", "CCM"))
+    if not aead:
+        return False, "non-AEAD cipher (e.g. CBC mode)"
+    forward_secrecy = upper.startswith(("ECDHE", "DHE", "TLS_ECDHE", "TLS_DHE"))
+    if not forward_secrecy:
+        return False, "no forward secrecy (static RSA key exchange)"
+    return True, "AEAD with forward secrecy"
 
 
 def _hostname_matches(cert: x509.Certificate, hostname: str) -> bool:
@@ -155,6 +184,25 @@ async def scan_tls(domain: str, port: int = 443) -> list[CheckResult]:
             "id": "tls.modern_protocol", "category": "tls",
             "title": "Modern TLS protocol in use", "passed": True, "severity": "info",
             "evidence": f"Negotiated {protocol}", "remediation": "",
+        })
+
+    # ── Cipher strength ──────────────────────────────────────────
+    cipher = info.get("cipher") or (None, None, None)
+    cipher_name, _, cipher_bits = cipher
+    strong, reason = _judge_cipher(protocol, cipher_name, cipher_bits)
+    if strong:
+        checks.append({
+            "id": "tls.strong_ciphers", "category": "tls",
+            "title": "Strong cipher suite negotiated", "passed": True, "severity": "info",
+            "evidence": f"{cipher_name} ({cipher_bits} bits) — {reason}", "remediation": "",
+        })
+    else:
+        checks.append({
+            "id": "tls.strong_ciphers", "category": "tls",
+            "title": "Weak cipher suite negotiated", "passed": False, "severity": "medium",
+            "evidence": f"{cipher_name or 'unknown'} — {reason}",
+            "remediation": "Prefer TLS 1.3, or TLS 1.2 with ECDHE + AES-GCM/ChaCha20 suites; "
+                           "disable RC4/3DES/CBC and static-RSA key exchange.",
         })
 
     return checks
