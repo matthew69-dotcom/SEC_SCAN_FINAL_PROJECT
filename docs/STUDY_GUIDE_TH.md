@@ -76,7 +76,8 @@
 - check ที่ scanner ส่งมาแต่**ไม่อยู่ใน rubric** = info-only (ไม่มีผลต่อคะแนน)
 - check ที่**อยู่ใน rubric แต่ไม่มีใครส่งมา** = ได้ 0 และ flag `present: false`
   → ช่องโหว่ของ coverage **มองเห็นได้** ไม่ใช่แอบเนียนได้คะแนนฟรี
-  (นี่คือเหตุผลที่ `tls.strong_ciphers` ที่ยังไม่ implement ทำให้ TLS เต็มแค่ 24/30)
+  (กลไกนี้เคยทำให้เห็นชัดว่า `tls.strong_ciphers` ยังไม่ implement — ตอนนี้
+  implement แล้ว ทุก check ใน rubric มี scanner ส่งมาครบ)
 - check id ซ้ำ (scanner glitch) → **last-wins** (deterministic)
 - breakdown ต่อ category ถูกส่งกลับให้ UI แสดง "ทำไมได้เกรดนี้" ทุกแถว
 
@@ -193,9 +194,11 @@ A: ขอบเขตคือ web-facing security posture ไม่ใช่ ne
 ไม่กระทบคะแนน (rubric ไม่มี port checks)
 
 **Q: ข้อจำกัดของระบบมีอะไรบ้าง?** *(ตอบเองก่อนโดนถามจะดูดี)*
-A: (1) `tls.strong_ciphers` ยังไม่ implement — TLS เต็มแค่ 24/30 (แผน W8)
-(2) ไม่มี Alembic — schema เปลี่ยนต้องสร้าง DB ใหม่ (3) DKIM เจอเฉพาะ common
-selectors (4) Geo-IP location ประมาณการ (5) ผล external validation อยู่ระหว่าง W8
+A: (1) `tls.strong_ciphers` ตัดสินจาก cipher ที่ negotiate ได้จริงใน handshake
+เดียว (suite ที่ server เลือกให้ client ยุคใหม่) — ไม่ได้ไล่ probe ทุก suite ที่
+server ยอมรับ (2) ไม่มี Alembic — schema เปลี่ยนต้องสร้าง DB ใหม่ (3) DKIM
+เจอเฉพาะ common selectors (4) Geo-IP location ประมาณการ (5) ผล external
+validation อยู่ระหว่าง W8
 
 **Q: แผน deploy คืออะไร ทำไมยังไม่ deploy?**
 A: architecture ถูกออกแบบให้ deploy-ready แล้ว: Docker images + compose ทั้ง
@@ -230,8 +233,9 @@ dashboard + W7 database ร่วม (ปรับตามจริงก่อ
 ## 7. ตัวเลขที่ควรจำขึ้นใจ
 
 - Rubric: **TLS 30 / Headers 25 / Email 25 / DNS 20** · Grade: **95 / 85 / 75 / 60 / 40**
-- TLS ตอนนี้เต็ม **24/30** (strong_ciphers 6 ยังไม่ implement)
-- Tests: **56/56 ผ่าน แบบ offline ทั้งหมด**
+- TLS เต็ม **30/30** แล้ว (strong_ciphers implement เสร็จ W8: AEAD + forward
+  secrecy, ไม่มี legacy algo เช่น RC4/3DES/MD5, key ≥128 bits; TLS 1.3 ผ่านเสมอ)
+- Tests: **ผ่านทั้งหมด** (offline เกือบทั้งชุด ยกเว้น integration tests ที่ยิง google.com)
 - Full scan: concurrency **5** hosts, timeout **20s**/host, ports **80/443/8080/8443/8000/3000**
 - Resolver pin: **8.8.8.8 / 1.1.1.1** · TLS ขั้นต่ำ **1.2** · cert renewal buffer **30 วัน**
 - Stack: Python **3.12** + FastAPI · React **19** + Vite **8** · SQLAlchemy **2.0** async

@@ -88,6 +88,7 @@ docker compose -f docker-compose.prod.yml up --build  # prod-style stack
 ## Current status (July 2026)
 
 Weeks 1–7 done: scanners, scoring, discovery, AI, FE↔BE integration, DB history.
-Backend tests 56/56 passing. Remaining (W8): `tls.strong_ciphers` check
-(TLS max is 24/30 until then), external validation, deploy (Railway + Vercel),
-merge `feat/fe-be-integration` + `feat/scan-history-db` → `DEV`.
+W8: `tls.strong_ciphers` implemented (2026-07-14) — all rubric checks now
+covered, TLS can reach 30/30. Remaining: external validation, deploy
+(Railway + Vercel), merge `feat/fe-be-integration` + `feat/scan-history-db`
+→ `DEV`.

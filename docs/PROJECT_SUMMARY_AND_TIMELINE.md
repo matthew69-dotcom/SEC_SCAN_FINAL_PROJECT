@@ -69,12 +69,12 @@ API (JSON + version)  →  Frontend React Dashboard
 
 | หมวด | น้ำหนัก | รายละเอียดหลัก |
 | :--- | :---: | :--- |
-| TLS | 30 | cert_valid (10) + modern_protocol (8) + strong_ciphers (6)* + cert_renewal_buffer (3) + hostname_match (3) |
+| TLS | 30 | cert_valid (10) + modern_protocol (8) + strong_ciphers (6) + cert_renewal_buffer (3) + hostname_match (3) |
 | Headers | 25 | HSTS (6) + CSP (6) + frame_protection (4) + nosniff (3) + referrer_policy (3) + permissions_policy (3) |
 | Email | 25 | SPF (8) + DMARC (7) + spf_hardfail (4) + dmarc_strict (4) + DKIM (2) |
 | DNS | 20 | DNSSEC (8) + CAA (5) + ns_redundancy (4) + no wildcard (3) |
 
-\*`tls.strong_ciphers` (น้ำหนัก 6) เป็น check สุดท้ายที่ยังไม่ได้ทำ — อยู่ในแผน W8
+`tls.strong_ciphers` (check สุดท้าย) implement เสร็จแล้ว 14 ก.ค. 2026 — rubric ครบ 100 คะแนนทุก check
 
 **เกณฑ์เกรด:** 95+ = A+ · 85+ = A · 75+ = B · 60+ = C · 40+ = D · ต่ำกว่านั้น = F
 
@@ -142,4 +142,4 @@ A: ขั้น Validation (W8) เราเทียบผลกับเคร
 - ✅ W1–W6 เสร็จ: scanners + scoring + discovery + API + AI analyzer (54 tests)
 - ✅ Frontend เชื่อมข้อมูล Geo-IP / open ports / AI summary เข้ากับ backend แล้ว (branch `feat/fe-be-integration`)
 - ⬜ W7: PostgreSQL (Role C)
-- ⬜ W8: Validation (B) · Deploy (ทุกคน) · `tls.strong_ciphers` (A) · เอกสาร/สไลด์
+- ⬜ W8: Validation (B) · Deploy (ทุกคน) · ~~`tls.strong_ciphers` (A)~~ ✅ 14 ก.ค. · เอกสาร/สไลด์

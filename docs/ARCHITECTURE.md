@@ -74,12 +74,11 @@ thresholds (95+ A+, 85+ A, 75+ B, 60+ C, 40+ D, else F):
 
 | Category | Weight | Checks |
 | :--- | :--- | :--- |
-| TLS | 30 | cert_valid 10, modern_protocol 8, strong_ciphers 6*, renewal_buffer 3, hostname_match 3 |
+| TLS | 30 | cert_valid 10, modern_protocol 8, strong_ciphers 6, renewal_buffer 3, hostname_match 3 |
 | Headers | 25 | HSTS 6, CSP 6, frame 4, nosniff 3, referrer 3, permissions 3 |
 | Email | 25 | SPF 8, DMARC 7, spf_hardfail 4, dmarc_strict 4, DKIM 2 |
 | DNS | 20 | DNSSEC 8, CAA 5, ns_redundancy 4, no_wildcard 3 |
 
-\* `tls.strong_ciphers` reserved, not yet implemented (W8) — TLS max is 24/30.
 Checks emitted but not listed are info-only; checks listed but never emitted
 score 0 (missing coverage is visible). Tuning the rubric = editing YAML only.
 
@@ -144,7 +143,9 @@ this topology locally. Local dev uses SQLite with zero setup.
 
 ## 7. Known limitations
 
-- `tls.strong_ciphers` not implemented (TLS capped at 24/30) — W8.
+- `tls.strong_ciphers` judges only the cipher negotiated in the single
+  observation handshake (server's preferred suite) — it does not enumerate
+  every suite the server accepts.
 - No Alembic migrations; schema changes recreate the dev DB.
 - Geo-IP `location` is approximate (registered network location; CDN edges
   skew it) — country/ISP/ASN are the reliable fields.
