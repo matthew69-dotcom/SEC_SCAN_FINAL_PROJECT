@@ -1,0 +1,62 @@
+# DEV stack — hot reload for backend + frontend, Postgres 16.
+#
+#   docker compose up            # start everything
+#   http://localhost:5173        # frontend (Vite dev server)
+#   http://localhost:8000/docs   # backend Swagger UI
+#
+# OPENAI_API_KEY is read from your shell env or a root-level .env file.
+# It is optional — without it AI summaries fall back to a local template.
+# Full guide: docs/DOCKER.md
+
+name: secscan
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: secscan
+      POSTGRES_PASSWORD: secscan
+      POSTGRES_DB: secscan
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secscan -d secscan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app            # live code reload
+    environment:
+      DATABASE_URL: postgresql://secscan:secscan@db:5432/secscan
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules   # keep Linux node_modules off the Windows mount
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  frontend_node_modules:

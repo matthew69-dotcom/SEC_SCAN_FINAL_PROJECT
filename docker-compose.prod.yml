@@ -1,0 +1,48 @@
+# PROD-style stack — built images, nginx serving the frontend.
+#
+#   docker compose -f docker-compose.prod.yml up --build -d
+#   http://localhost:8080        # app (nginx proxies /api to backend)
+#
+# Mirrors the Railway (backend+Postgres) / Vercel (frontend) deployment
+# so it can be demoed or self-hosted from a single machine.
+
+name: secscan-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: secscan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secscan}
+      POSTGRES_DB: secscan
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secscan -d secscan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://secscan:${POSTGRES_PASSWORD:-secscan}@db:5432/secscan
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      CORS_ORIGINS: http://localhost:8080
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:
