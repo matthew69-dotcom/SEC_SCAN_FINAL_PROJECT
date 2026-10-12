@@ -41,6 +41,7 @@ from app.scanners.tls_scanner import scan_tls
 from app.scanners.port_scanner import scan_ports, open_port_numbers
 from app.scoring import score_checks
 from app.utils.geoip import lookup_many
+from app.utils.netsafety import is_public_ip, non_public_ips
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -105,15 +106,53 @@ async def _email_applies(host: str, apex: str) -> bool:
     return mx is not False
 
 
+def _private_ip_finding(hosts_ips: list[tuple[str, list[str]]]) -> dict:
+    """Info-leak finding: public DNS names resolving to internal addresses.
+
+    Not in the rubric (so it never changes the score) — reported as evidence.
+    """
+    pairs = ", ".join(f"{h} -> {', '.join(ips)}" for h, ips in hosts_ips)
+    return {
+        "id": "dns.private_ip_exposed", "category": "dns",
+        "title": "Public DNS exposes internal (private) IP addresses",
+        "passed": False, "severity": "medium",
+        "evidence": pairs[:500],
+        "remediation": "Remove internal addresses from the public zone, or serve them "
+                       "only from an internal (split-horizon) DNS view.",
+    }
+
+
+def _skipped_private_checks(domain: str, ips: list[str]) -> list[dict]:
+    why = (f"Skipped: {domain} resolves to non-public address(es) {', '.join(ips)}; "
+           "the scanner never connects to private/internal networks.")
+    return [
+        {"id": "tls.handshake", "category": "tls", "title": "TLS not checked (non-public IP)",
+         "passed": False, "severity": "info", "evidence": why, "remediation": ""},
+        {"id": "headers.fetch", "category": "headers", "title": "HTTP headers not checked (non-public IP)",
+         "passed": False, "severity": "info", "evidence": why, "remediation": ""},
+    ]
+
+
+async def _no_checks() -> list:
+    return []
+
+
 async def _scan_single_host(domain: str, *, check_email: bool = True) -> tuple[list, dict]:
+    # SSRF guard: TLS + headers open connections, so only to public addresses.
+    # DNS + email scanners only query public resolvers and stay enabled.
+    private = await non_public_ips(domain)
+    connect = not private
     dns_res, tls_res, headers_res, email_res = await asyncio.gather(
         scan_dns(domain),
-        scan_tls(domain),
-        scan_headers(domain),
+        scan_tls(domain) if connect else _no_checks(),
+        scan_headers(domain) if connect else _no_checks(),
         scan_email(domain) if check_email else _no_email_checks(),
         return_exceptions=True,
     )
     all_checks: list[dict] = []
+    if not connect:
+        all_checks.extend(_skipped_private_checks(domain, private))
+        all_checks.append(_private_ip_finding([(domain, private)]))
     if not check_email:
         all_checks.append(_email_not_applicable_finding(domain))
     for res in (dns_res, tls_res, headers_res, email_res):
@@ -241,6 +280,17 @@ async def scan(
         logger.info("Capping hosts %d -> %d", total_discovered, MAX_HOSTS)
         discovered = _prioritize_hosts(discovered, req.domain, MAX_HOSTS)
 
+    # SSRF guard: hosts whose DNS points at private/internal addresses are
+    # reported (info leak) but never connected to or port-scanned.
+    private_checks = await asyncio.gather(
+        *[non_public_ips(h.hostname, h.ip) for h in discovered]
+    )
+    private_hosts = [(h.hostname, ips) for h, ips in zip(discovered, private_checks, strict=True) if ips]
+    discovered = [h for h, ips in zip(discovered, private_checks, strict=True) if not ips]
+    if private_hosts:
+        logger.info("Skipping %d host(s) on non-public IPs: %s",
+                    len(private_hosts), [h for h, _ in private_hosts])
+
     sem = asyncio.Semaphore(MAX_HOST_CONCURRENCY)
 
     async def _scan_host_safe(host_info) -> HostResult | None:
@@ -300,7 +350,10 @@ async def scan(
         async with port_sem:
             return await scan_ports(host)
 
-    port_scan_tasks = [_ports_limited(hr.host) for hr in host_results]
+    # Scan the vetted public IP (not the hostname) so a DNS answer that changes
+    # between the check and the connect can't redirect us to a private address.
+    port_hosts = [hr for hr in host_results if is_public_ip(hr.ip)]
+    port_scan_tasks = [_ports_limited(hr.ip) for hr in port_hosts]
     try:
         port_scan_results = await asyncio.wait_for(
             asyncio.gather(*port_scan_tasks, return_exceptions=True),
@@ -309,7 +362,7 @@ async def scan(
     except TimeoutError:
         logger.warning("Port scans timed out — continuing without open-port data")
         port_scan_results = []
-    for hr, port_res in zip(host_results, port_scan_results):
+    for hr, port_res in zip(port_hosts, port_scan_results):
         if isinstance(port_res, list):
             hr.open_ports = open_port_numbers(port_res)
     logger.info("[timing] geo-ip + ports: %.1fs", time.perf_counter() - t2)
@@ -328,6 +381,8 @@ async def scan(
         (h for h in host_results if h.host == req.domain),
         host_results[0] if host_results else None,
     )
+    if apex_result and private_hosts:
+        apex_result.findings.append(Finding(**_private_ip_finding(private_hosts)))
     if apex_result:
         top_score = apex_result.score
         top_grade = apex_result.grade
@@ -343,6 +398,7 @@ async def scan(
         f"Full domain scan complete for {req.domain}. "
         f"Discovered {total_discovered} host(s)"
         + (f" (scanned the top {MAX_HOSTS})" if total_discovered > MAX_HOSTS else "")
+        + (f", skipped {len(private_hosts)} on private IPs" if private_hosts else "")
         + f", scanned {len(host_results)}, "
         f"failed {hosts_failed}. "
         f"Domain score (worst host): {domain_score}/100 -> {domain_grade}. "

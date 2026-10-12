@@ -518,9 +518,14 @@ function ResultPage({
   const tlsProtoStr    = (tlsHandshake?.passed && tlsHandshake?.evidence)
     ? tlsHandshake.evidence.replace(/^Negotiated:\s*/i, "")
     : null;
-  const httpStatus: string = webResponds
-    ? (port443Open ? "200 HTTPS" : "200 HTTP")
-    : (headersFetch?.evidence?.split(":")[0] ?? "unreachable");
+  // Only report what the scanners actually observed. The backend does an
+  // HTTPS GET (headers scanner) but records no status code, so we must not
+  // invent one like "200 HTTP".
+  const webLabel = (fetchFail: Finding | undefined, httpsUp: boolean): string =>
+    fetchFail
+      ? (fetchFail.severity === "info" ? "Not checked" : "No HTTPS response")
+      : (httpsUp ? "HTTPS OK" : "—");
+  const httpStatus: string = webLabel(headersFetch, port443Open);
 
   interface IPRow {
     ip: string;
@@ -551,10 +556,10 @@ function ResultPage({
         ip:            h.ip,
         hostname:      h.host,
         status:        "active" as const,
-        port80:        httpUp || ports.length === 0,
+        port80:        httpUp,
         port443:       httpsUp,
         openPorts:     ports,
-        webResponse:   httpsUp ? "200 HTTPS" : "200 HTTP",
+        webResponse:   webLabel(h.findings.find(f => f.id === "headers.fetch"), httpsUp),
         location:      h.location || "—",
         ispAsn,
         score:         h.score,
@@ -569,9 +574,9 @@ function ResultPage({
       ip,
       hostname:    idx === 0 ? result.domain : result.domain,
       status:      "active" as const,
-      port80:      webResponds,
+      port80:      false,  // single mode runs no port scan, so port 80 is unknown
       port443:     port443Open,
-      openPorts:   [...(webResponds ? [80] : []), ...(port443Open ? [443] : [])],
+      openPorts:   port443Open ? [443] : [],
       webResponse: httpStatus,
       location:    "—",
       ispAsn:      "—",
@@ -876,8 +881,8 @@ function ResultPage({
                           </td>
                           <td className="px-4 py-3">
                             <span className={`font-mono text-xs ${
-                              row.webResponse.startsWith("200") ? "text-emerald-400"
-                              : row.webResponse === "—" || row.webResponse === "unreachable" ? "text-slate-600"
+                              row.webResponse === "HTTPS OK" ? "text-emerald-400"
+                              : row.webResponse === "—" || row.webResponse === "Not checked" ? "text-slate-600"
                               : "text-yellow-400"
                             }`}>
                               {row.webResponse}
@@ -914,7 +919,7 @@ function ResultPage({
                 <div className="border-t border-surface-border px-5 py-3">
                   <p className="font-mono text-[10px] text-slate-700">
                     ⓘ Location and ISP/ASN data require a geo-IP lookup service not yet integrated into the backend.
-                    Port 80/443 status and web response are derived from the TLS and HTTP header scanner results.
+                    Port 443 and web response are derived from the TLS and HTTP header scanner results (single mode runs no port scan).
                   </p>
                 </div>
               )}
