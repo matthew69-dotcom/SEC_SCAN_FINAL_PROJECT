@@ -88,7 +88,15 @@ async def _call_langchain(domain: str, score: int, grade: str, findings: list[Ch
         ("system", SYSTEM_PROMPT),
         ("human", USER_PROMPT_TEMPLATE + "\n\n{format_instructions}"),
     ])
-    model = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
+    # Explicit timeout: langchain/openai default is 600s with retries, which made
+    # Full scans look frozen whenever the OpenAI API was slow or unreachable.
+    model = ChatOpenAI(
+        model=settings.openai_model,
+        temperature=0,
+        api_key=settings.openai_api_key,
+        timeout=20,
+        max_retries=1,
+    )
     chain = prompt | model | parser
 
     try:

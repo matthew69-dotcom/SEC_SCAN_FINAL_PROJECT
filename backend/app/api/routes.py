@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -46,6 +47,29 @@ router = APIRouter()
 
 MAX_HOST_CONCURRENCY = 5
 HOST_SCAN_TIMEOUT = 20.0
+
+# Full-scan guard rails. crt.sh results grow over time, so without a cap a
+# domain that used to yield ~10 hosts can later yield hundreds and the scan
+# appears to hang. Every phase is also bounded so one slow third-party
+# service (crt.sh / ip-api.com / OpenAI) can't stall the whole request.
+MAX_HOSTS = 25
+DISCOVERY_TIMEOUT = 45.0
+GEOIP_TIMEOUT = 10.0
+PORT_SCAN_TIMEOUT = 20.0
+PORT_SCAN_CONCURRENCY = 10
+AI_TIMEOUT = 30.0
+
+
+def _prioritize_hosts(hosts: list, apex: str, limit: int) -> list:
+    """Keep the apex and www first, then the shallowest/shortest names."""
+    def rank(h) -> tuple:
+        name = h.hostname
+        if name == apex:
+            return (0, 0, 0, name)
+        if name == f"www.{apex}":
+            return (1, 0, 0, name)
+        return (2, name.count("."), len(name), name)
+    return sorted(hosts, key=rank)[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +190,23 @@ async def scan(
     # mode="full" — multi-host scan
     # ------------------------------------------------------------------
     logger.info("Starting full scan for %s", req.domain)
-    discovered = await enumerate_hosts(req.domain)
-    logger.info("Discovered %d live hosts for %s", len(discovered), req.domain)
+    t0 = time.perf_counter()
+    try:
+        discovered = await asyncio.wait_for(
+            enumerate_hosts(req.domain), timeout=DISCOVERY_TIMEOUT,
+        )
+    except TimeoutError:
+        logger.warning("Discovery timed out for %s — scanning apex only", req.domain)
+        from app.discovery.enumerator import DiscoveredHost  # noqa: PLC0415
+        discovered = [DiscoveredHost(hostname=req.domain, ip="")]
+    logger.info(
+        "[timing] discovery: %d live hosts for %s in %.1fs",
+        len(discovered), req.domain, time.perf_counter() - t0,
+    )
+    total_discovered = len(discovered)
+    if total_discovered > MAX_HOSTS:
+        logger.info("Capping hosts %d -> %d", total_discovered, MAX_HOSTS)
+        discovered = _prioritize_hosts(discovered, req.domain, MAX_HOSTS)
 
     sem = asyncio.Semaphore(MAX_HOST_CONCURRENCY)
 
@@ -186,22 +225,29 @@ async def scan(
                     breakdown=_build_breakdown(score_result),
                     findings=_build_findings(all_checks),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Host scan timed out: %s", host_info.hostname)
                 return None
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Host scan failed: %s — %s", host_info.hostname, exc)
                 return None
 
+    t1 = time.perf_counter()
     scan_tasks = [_scan_host_safe(h) for h in discovered]
     results = await asyncio.gather(*scan_tasks)
+    logger.info("[timing] host scans: %d hosts in %.1fs", len(discovered), time.perf_counter() - t1)
 
     host_results: list[HostResult] = [r for r in results if r is not None]
     hosts_failed = len(results) - len(host_results)
 
     # Geo-IP: lookup all IPs concurrently
+    t2 = time.perf_counter()
     ips = [h.ip for h in host_results if h.ip]
-    geo_map = await lookup_many(ips)
+    try:
+        geo_map = await asyncio.wait_for(lookup_many(ips), timeout=GEOIP_TIMEOUT)
+    except TimeoutError:
+        logger.warning("Geo-IP lookups timed out — continuing without location")
+        geo_map = {}
     for hr in host_results:
         geo = geo_map.get(hr.ip)
         if geo:
@@ -210,11 +256,25 @@ async def scan(
             hr.asn = geo.asn
 
     # Port scan: run concurrently across all hosts
-    port_scan_tasks = [scan_ports(hr.host) for hr in host_results]
-    port_scan_results = await asyncio.gather(*port_scan_tasks, return_exceptions=True)
+    port_sem = asyncio.Semaphore(PORT_SCAN_CONCURRENCY)
+
+    async def _ports_limited(host: str):
+        async with port_sem:
+            return await scan_ports(host)
+
+    port_scan_tasks = [_ports_limited(hr.host) for hr in host_results]
+    try:
+        port_scan_results = await asyncio.wait_for(
+            asyncio.gather(*port_scan_tasks, return_exceptions=True),
+            timeout=PORT_SCAN_TIMEOUT,
+        )
+    except TimeoutError:
+        logger.warning("Port scans timed out — continuing without open-port data")
+        port_scan_results = []
     for hr, port_res in zip(host_results, port_scan_results):
         if isinstance(port_res, list):
             hr.open_ports = open_port_numbers(port_res)
+    logger.info("[timing] geo-ip + ports: %.1fs", time.perf_counter() - t2)
 
     if host_results:
         worst = min(host_results, key=lambda h: h.score)
@@ -243,7 +303,9 @@ async def scan(
 
     summary = (
         f"Full domain scan complete for {req.domain}. "
-        f"Discovered {len(discovered)} host(s), scanned {len(host_results)}, "
+        f"Discovered {total_discovered} host(s)"
+        + (f" (scanned the top {MAX_HOSTS})" if total_discovered > MAX_HOSTS else "")
+        + f", scanned {len(host_results)}, "
         f"failed {hosts_failed}. "
         f"Domain score (worst host): {domain_score}/100 -> {domain_grade}. "
         f"Average score: {avg_score}/100."
@@ -255,19 +317,24 @@ async def scan(
         try:
             from app.ai.analyzer import analyze_findings  # noqa: PLC0415
             apex_checks = [f.model_dump() for f in apex_result.findings]
-            ai_summary = await analyze_findings(apex_checks, {
+            t3 = time.perf_counter()
+            ai_summary = await asyncio.wait_for(analyze_findings(apex_checks, {
                 "score": top_score,
                 "grade": top_grade,
                 "domain": req.domain,
                 "hosts_scanned": len(host_results),
                 "domain_score": domain_score,
                 "domain_grade": domain_grade,
-            })
+            }), timeout=AI_TIMEOUT)
+            logger.info("[timing] AI summary: %.1fs", time.perf_counter() - t3)
+        except TimeoutError:
+            logger.warning("AI analyzer timed out after %.0fs — no AI summary", AI_TIMEOUT)
         except ImportError:
             pass  # ai/analyzer.py not yet implemented — skip silently
         except Exception as exc:  # noqa: BLE001
             logger.warning("AI analyzer failed: %s", exc)
 
+    logger.info("[timing] full scan total: %.1fs", time.perf_counter() - t0)
     version.rubric = 1
     resp = ScanResponse(
         scan_id=str(uuid.uuid4()),

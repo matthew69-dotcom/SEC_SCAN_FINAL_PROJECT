@@ -9,6 +9,9 @@ from app.api.routes import router
 from app.config import settings
 from app.db.database import init_db
 
+# Show app-level INFO logs (e.g. "[timing]" lines from full scans) under
+# uvicorn, which only configures its own loggers.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
