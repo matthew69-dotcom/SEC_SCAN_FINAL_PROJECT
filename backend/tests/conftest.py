@@ -26,3 +26,10 @@ def _hermetic_mx_lookup():
     """
     with patch("app.api.routes.has_mx", AsyncMock(return_value=True)) as m:
         yield m
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_private_ip_check():
+    """Default: every host resolves to public IPs only (no real DNS in tests)."""
+    with patch("app.api.routes.non_public_ips", AsyncMock(return_value=[])) as m:
+        yield m
