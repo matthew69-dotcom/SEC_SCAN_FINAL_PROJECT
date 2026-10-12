@@ -35,7 +35,7 @@ from app.db.database import get_session
 from app.config import settings
 from app.discovery.enumerator import enumerate_hosts
 from app.scanners.dns_scanner import scan_dns
-from app.scanners.email_scanner import scan_email
+from app.scanners.email_scanner import has_mx, scan_email
 from app.scanners.header_scanner import scan_headers
 from app.scanners.tls_scanner import scan_tls
 from app.scanners.port_scanner import scan_ports, open_port_numbers
@@ -76,15 +76,46 @@ def _prioritize_hosts(hosts: list, apex: str, limit: int) -> list:
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _scan_single_host(domain: str) -> tuple[list, dict]:
+async def _no_email_checks() -> list:
+    return []
+
+
+def _email_not_applicable_finding(domain: str) -> dict:
+    """Info-only finding (not in the rubric, so it never affects the score)."""
+    return {
+        "id": "email.not_applicable", "category": "email",
+        "title": "Email authentication not applicable",
+        "passed": True, "severity": "info",
+        "evidence": f"{domain} has no MX record, so it does not receive mail; "
+                    "SPF/DMARC/DKIM are evaluated on the apex domain instead.",
+        "remediation": "",
+    }
+
+
+async def _email_applies(host: str, apex: str) -> bool:
+    """Email auth is graded on the apex and on any host with its own MX.
+
+    Subdomains without MX (www, api, app...) don't handle mail, so penalising
+    them for missing SPF/DMARC would be unfair. If the MX lookup fails we
+    keep the check (conservative — never hide a possible issue on error).
+    """
+    if host == apex:
+        return True
+    mx = await has_mx(host)
+    return mx is not False
+
+
+async def _scan_single_host(domain: str, *, check_email: bool = True) -> tuple[list, dict]:
     dns_res, tls_res, headers_res, email_res = await asyncio.gather(
         scan_dns(domain),
         scan_tls(domain),
         scan_headers(domain),
-        scan_email(domain),
+        scan_email(domain) if check_email else _no_email_checks(),
         return_exceptions=True,
     )
     all_checks: list[dict] = []
+    if not check_email:
+        all_checks.append(_email_not_applicable_finding(domain))
     for res in (dns_res, tls_res, headers_res, email_res):
         if isinstance(res, list):
             all_checks.extend(res)
@@ -94,7 +125,9 @@ async def _scan_single_host(domain: str) -> tuple[list, dict]:
                 "title": "Scanner crashed", "passed": False, "severity": "low",
                 "evidence": f"{res.__class__.__name__}: {res}", "remediation": "",
             })
-    score_result = score_checks(all_checks)
+    score_result = score_checks(
+        all_checks, not_applicable=() if check_email else ("email",),
+    )
     return all_checks, score_result
 
 
@@ -213,9 +246,14 @@ async def scan(
     async def _scan_host_safe(host_info) -> HostResult | None:
         async with sem:
             try:
+                async def _scan_one():
+                    check_email = await _email_applies(host_info.hostname, req.domain)
+                    return await _scan_single_host(
+                        host_info.hostname, check_email=check_email,
+                    )
+
                 all_checks, score_result = await asyncio.wait_for(
-                    _scan_single_host(host_info.hostname),
-                    timeout=HOST_SCAN_TIMEOUT,
+                    _scan_one(), timeout=HOST_SCAN_TIMEOUT,
                 )
                 return HostResult(
                     host=host_info.hostname,
