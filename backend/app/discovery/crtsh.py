@@ -11,6 +11,7 @@ This is entirely **read-only / passive** — no active probing.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Set
@@ -21,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 CRTSH_URL = "https://crt.sh/"
 _WILDCARD_RE = re.compile(r"^\*\.")
-_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+# httpx timeouts are per-operation, so a slow-trickling crt.sh response could
+# run far longer than _TIMEOUT. This caps the WHOLE request.
+_TOTAL_DEADLINE = 20.0
 
 
 async def fetch_crtsh_subdomains(domain: str) -> Set[str]:
@@ -45,10 +49,16 @@ async def fetch_crtsh_subdomains(domain: str) -> Set[str]:
     params = {"q": f"%.{domain}", "output": "json"}
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(CRTSH_URL, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        async def _fetch():
+            async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
+                resp = await client.get(CRTSH_URL, params=params)
+                resp.raise_for_status()
+                return resp.json()
+
+        data = await asyncio.wait_for(_fetch(), timeout=_TOTAL_DEADLINE)
+    except TimeoutError:
+        logger.warning("crt.sh timed out after %.0fs for %s", _TOTAL_DEADLINE, domain)
+        return results
     except httpx.HTTPStatusError as exc:
         logger.warning("crt.sh HTTP error for %s: %s", domain, exc)
         return results
