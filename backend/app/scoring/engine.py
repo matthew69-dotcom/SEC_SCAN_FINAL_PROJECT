@@ -15,6 +15,12 @@ Design rules followed:
   - Checks not listed in the rubric are skipped (info-only sanity checks).
   - Rubric-listed checks that don't arrive earn 0 — making coverage gaps
     visible rather than silently inflating the score.
+  - A caller may mark whole categories as NOT APPLICABLE (e.g. email auth on a
+    subdomain that has no MX record and therefore never sends mail). Those
+    categories are left out of the breakdown and the score is rescaled to the
+    remaining applicable points: round(earned / applicable_max * 100). This is
+    different from "check missing" (still earns 0) — N/A is a deliberate,
+    explicit decision by the caller, never inferred from missing data.
 """
 from __future__ import annotations
 
@@ -199,12 +205,16 @@ class ScoreResult(TypedDict):
 def score_checks(
     checks: Iterable[CheckResult],
     rubric: Rubric | None = None,
+    *,
+    not_applicable: Iterable[str] = (),
 ) -> ScoreResult:
     """Aggregate scanner CheckResults into a deterministic score + breakdown.
 
     Args:
         checks: flat iterable of CheckResult dicts emitted by the scanners.
         rubric: optional Rubric (mainly for tests). Defaults to weights.yaml.
+        not_applicable: category names to exclude from scoring entirely
+            (score is rescaled to the applicable maximum).
 
     Returns:
         ScoreResult with score, grade, and per-category breakdown.
@@ -220,10 +230,19 @@ def score_checks(
     for c in checks:
         by_id[c["id"]] = c
 
+    skip = set(not_applicable)
+    unknown = skip - set(rubric.categories)
+    if unknown:
+        raise ValueError(f"unknown not_applicable categories: {sorted(unknown)}")
+
     breakdown: list[CategoryBreakdown] = []
     total_earned = 0
+    applicable_max = 0
 
     for cat_name, cat in rubric.categories.items():
+        if cat_name in skip:
+            continue
+        applicable_max += cat.weight_total
         rows: list[CheckScore] = []
         cat_earned = 0
         for check_id, weight in cat.checks.items():
@@ -256,6 +275,11 @@ def score_checks(
         })
         total_earned += cat_earned
 
+    if skip and applicable_max > 0:
+        # Rescale to 0-100 over the applicable points only (round half up).
+        total_earned = int(total_earned * 100 / applicable_max + 0.5)
+    elif skip:
+        total_earned = 0  # every category N/A — nothing to grade
     score = max(0, min(100, total_earned))
     grade = rubric.grade_for(score)
 

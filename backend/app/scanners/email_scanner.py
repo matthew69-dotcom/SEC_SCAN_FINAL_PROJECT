@@ -51,6 +51,25 @@ async def _txt_records(name: str) -> tuple[list[str], str | None]:
         return [], f"DNS error: {e.__class__.__name__}"
 
 
+async def has_mx(domain: str) -> bool | None:
+    """Does *domain* publish its own MX record (i.e. does it handle mail)?
+
+    True  -> MX present
+    False -> name exists but has no MX / NXDOMAIN (does not handle mail)
+    None  -> lookup failed (timeout / resolver error) — caller should not
+             assume either way. Never raises.
+    """
+    try:
+        ans = await _resolver.resolve(domain, "MX")
+        return len(ans) > 0
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        return False
+    except dns.exception.DNSException:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _check_spf(domain: str) -> list[CheckResult]:
     records, err = await _txt_records(domain)
     spf = next((r for r in records if r.lower().startswith("v=spf1")), None)
