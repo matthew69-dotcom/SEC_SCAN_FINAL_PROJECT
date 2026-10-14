@@ -1,0 +1,19 @@
+# One domain per line. Mix of strong, average and deliberately broken setups.
+# Large, well-configured sites
+google.com
+github.com
+cloudflare.com
+wikipedia.org
+youtube.com
+# Thai universities / government / banks (real-world local targets)
+mfu.ac.th
+chula.ac.th
+mahidol.ac.th
+thaigov.go.th
+scb.co.th
+# Smaller / simpler sites
+example.com
+# Deliberately broken TLS (badssl.com is built for testing scanners)
+expired.badssl.com
+wrong.host.badssl.com
+self-signed.badssl.com
