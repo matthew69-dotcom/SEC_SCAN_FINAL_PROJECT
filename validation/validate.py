@@ -244,8 +244,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             scores = [r["score"] for r in runs]
             per_run = [verdicts(r["findings"]) for r in runs]
             all_ids = sorted({k for v in per_run for k in v})
+            # A check "flips" if its verdict differs OR it is missing in some
+            # runs (e.g. headers.fetch failing replaces the 6 header checks).
             flipping = [cid for cid in all_ids
-                        if len({v.get(cid) for v in per_run if cid in v}) > 1]
+                        if len({v.get(cid) for v in per_run}) > 1]
             stability_rows.append({
                 "domain": domain, "mode": args.mode, "runs_ok": len(runs),
                 "grades": " ".join(grades), "scores": " ".join(map(str, scores)),
