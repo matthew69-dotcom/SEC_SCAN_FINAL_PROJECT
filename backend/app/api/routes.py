@@ -59,6 +59,10 @@ GEOIP_TIMEOUT = 10.0
 PORT_SCAN_TIMEOUT = 20.0
 PORT_SCAN_CONCURRENCY = 10
 AI_TIMEOUT = 30.0
+# The apex is what the report headline describes, so it gets a longer budget
+# and one retry. Its result is NEVER replaced by another host's.
+APEX_SCAN_TIMEOUT = 40.0
+APEX_SCAN_ATTEMPTS = 2
 
 
 def _prioritize_hosts(hosts: list, apex: str, limit: int) -> list:
@@ -292,8 +296,12 @@ async def scan(
                     len(private_hosts), [h for h, _ in private_hosts])
 
     sem = asyncio.Semaphore(MAX_HOST_CONCURRENCY)
+    timed_out: list[str] = []
 
     async def _scan_host_safe(host_info) -> HostResult | None:
+        is_apex = host_info.hostname == req.domain
+        timeout = APEX_SCAN_TIMEOUT if is_apex else HOST_SCAN_TIMEOUT
+        attempts = APEX_SCAN_ATTEMPTS if is_apex else 1
         async with sem:
             try:
                 async def _scan_one():
@@ -302,9 +310,17 @@ async def scan(
                         host_info.hostname, check_email=check_email,
                     )
 
-                all_checks, score_result = await asyncio.wait_for(
-                    _scan_one(), timeout=HOST_SCAN_TIMEOUT,
-                )
+                for attempt in range(1, attempts + 1):
+                    try:
+                        all_checks, score_result = await asyncio.wait_for(
+                            _scan_one(), timeout=timeout,
+                        )
+                        break
+                    except TimeoutError:
+                        if attempt == attempts:
+                            raise
+                        logger.warning("Apex scan timed out (attempt %d) — retrying: %s",
+                                       attempt, host_info.hostname)
                 return HostResult(
                     host=host_info.hostname,
                     ip=host_info.ip,
@@ -315,6 +331,7 @@ async def scan(
                 )
             except TimeoutError:
                 logger.warning("Host scan timed out: %s", host_info.hostname)
+                timed_out.append(host_info.hostname)
                 return None
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Host scan failed: %s — %s", host_info.hostname, exc)
@@ -377,10 +394,10 @@ async def scan(
         domain_grade = "F"  # type: ignore[assignment]
         avg_score = 0.0
 
-    apex_result = next(
-        (h for h in host_results if h.host == req.domain),
-        host_results[0] if host_results else None,
-    )
+    # Headline = the apex itself. Never substitute another host's result:
+    # that previously made e.g. a youtube.com report show a subdomain's
+    # findings ("no MX", "no CAA") under the youtube.com name.
+    apex_result = next((h for h in host_results if h.host == req.domain), None)
     if apex_result and private_hosts:
         apex_result.findings.append(Finding(**_private_ip_finding(private_hosts)))
     if apex_result:
@@ -389,9 +406,19 @@ async def scan(
         top_findings = apex_result.findings
         top_breakdown = apex_result.breakdown
     else:
+        logger.warning("Apex %s could not be scanned — headline uses domain score", req.domain)
         top_score = domain_score
         top_grade = domain_grade  # type: ignore[assignment]
-        top_findings = []
+        top_findings = [Finding(
+            id="scan.apex_unavailable", category="dns",
+            title=f"Could not scan {req.domain} itself",
+            severity="info", passed=False,
+            evidence=("The apex scan timed out or failed after retry. The headline "
+                      "score shown is the domain (worst-host) score, not the apex's."),
+            remediation="Re-run the scan; if it persists, check the domain's DNS/HTTPS reachability.",
+        )]
+        if private_hosts:
+            top_findings.append(Finding(**_private_ip_finding(private_hosts)))
         top_breakdown = []
 
     summary = (
@@ -400,8 +427,14 @@ async def scan(
         + (f" (scanned the top {MAX_HOSTS})" if total_discovered > MAX_HOSTS else "")
         + (f", skipped {len(private_hosts)} on private IPs" if private_hosts else "")
         + f", scanned {len(host_results)}, "
-        f"failed {hosts_failed}. "
-        f"Domain score (worst host): {domain_score}/100 -> {domain_grade}. "
+        f"failed {hosts_failed}"
+        + (f" (timed out: {', '.join(sorted(timed_out)[:5])}"
+           + (f" +{len(timed_out) - 5} more" if len(timed_out) > 5 else "") + ")"
+           if timed_out else "")
+        + ". "
+        + ("" if apex_result else
+           f"Could not scan {req.domain} itself — headline shows the domain score. ")
+        + f"Domain score (worst host): {domain_score}/100 -> {domain_grade}. "
         f"Average score: {avg_score}/100."
     )
 
