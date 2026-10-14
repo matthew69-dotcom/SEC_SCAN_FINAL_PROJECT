@@ -54,10 +54,13 @@ const GRADE_PILL: Record<Grade, string> = {
   "F":  "bg-red-500/15     text-red-300     border-red-500/40",
 };
 
-function getRisk(score: number): { label: string; cls: string } {
+// Score-based band, but "Critical" is reserved for reports that actually
+// contain a failed critical-severity finding (pass hasCritical when known).
+function getRisk(score: number, hasCritical?: boolean): { label: string; cls: string } {
   if (score >= 85) return { label: "Low Risk",      cls: "text-emerald-400" };
   if (score >= 70) return { label: "Medium Risk",   cls: "text-yellow-400" };
-  if (score >= 50) return { label: "High Risk",     cls: "text-orange-400" };
+  if (score >= 50 || hasCritical === false)
+                   return { label: "High Risk",     cls: "text-orange-400" };
   return            { label: "Critical Risk",  cls: "text-red-400" };
 }
 
@@ -486,7 +489,10 @@ function ResultPage({
 }: {
   result: ScanResponse; onNewScan: () => void;
 }) {
-  const risk = getRisk(result.score);
+  const risk = getRisk(
+    result.score,
+    result.findings.some(f => !f.passed && f.severity === "critical"),
+  );
   const gradeRing = GRADE_RING[result.grade] ?? GRADE_RING["F"];
 
   const grouped: Record<Severity, Finding[]> = {

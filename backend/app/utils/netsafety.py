@@ -50,7 +50,7 @@ async def non_public_ips(hostname: str, known_ip: str | None = None) -> list[str
     one private record is still treated as unsafe.
     """
     ips = await resolve_ipv4(hostname)
-    if known_ip and known_ip not in ips:
+    if known_ip and known_ip.strip() and known_ip not in ips:
         ips.append(known_ip)
     return [ip for ip in ips if not is_public_ip(ip)]
 

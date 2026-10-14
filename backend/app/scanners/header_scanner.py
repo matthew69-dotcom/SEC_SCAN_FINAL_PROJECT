@@ -168,7 +168,11 @@ async def scan_headers(domain: str) -> list[CheckResult]:
             headers={"User-Agent": "MFU-DomainSecurityChecker/0.1 (senior-project)"},
             verify=True,
         ) as client:
-            resp = await client.get(url)
+            # Stream so we only read the response HEADERS and never download
+            # the body. Large homepages (e.g. youtube.com) used to eat most of
+            # the per-host time budget and made results vary run to run.
+            async with client.stream("GET", url) as resp:
+                h = resp.headers
     except httpx.HTTPError as e:
         return [{
             "id": "headers.fetch", "category": "headers",
@@ -177,7 +181,6 @@ async def scan_headers(domain: str) -> list[CheckResult]:
             "remediation": "Ensure the site responds to HTTPS GET on the root path.",
         }]
 
-    h = resp.headers
     return [
         _check_hsts(h),
         _check_csp(h),
