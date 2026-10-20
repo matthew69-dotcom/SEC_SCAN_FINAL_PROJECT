@@ -38,8 +38,8 @@ SEC_SCAN_FINAL_PROJECT/
 │   │   ├── scanners/            # Each returns CheckResult list, never raises, runs in parallel
 │   │   │   ├── base.py          # CheckResult + shared scanner scaffolding
 │   │   │   ├── dns_scanner.py   # DNSSEC, CAA, NS redundancy, wildcard
-│   │   │   ├── tls_scanner.py   # Cert validity, protocol, hostname match (manual handshake)
-│   │   │   ├── header_scanner.py# HSTS, CSP, X-Frame-Options, nosniff, referrer, permissions
+│   │   │   ├── tls_scanner.py   # Cert expiry + trust chain, protocol, hostname, cipher (2 handshakes)
+│   │   │   ├── header_scanner.py# HSTS, CSP, X-Frame-Options, nosniff, referrer, permissions (1 retry)
 │   │   │   ├── email_scanner.py # SPF, DKIM, DMARC
 │   │   │   └── port_scanner.py  # Open-port observation (Full scan mode)
 │   │   │
@@ -68,14 +68,20 @@ SEC_SCAN_FINAL_PROJECT/
 │   │   │   └── crud.py          # create / list / get / delete
 │   │   │
 │   │   └── utils/
-│   │       └── geoip.py         # ip-api.com lookup (country/ISP/ASN reliable, location ≈)
+│   │       ├── geoip.py         # ip-api.com lookup (country/ISP/ASN reliable, location ≈)
+│   │       └── netsafety.py     # SSRF guard: is_public_ip / non_public_ips
 │   │
-│   └── tests/                   # pytest + pytest-asyncio — all offline (mocked network)
+│   └── tests/                   # pytest + pytest-asyncio — 142 tests, offline except 4 live google.com tests
+│       ├── conftest.py          # Hermetic defaults: no OpenAI key, MX + private-IP lookups mocked
 │       ├── test_main.py         # API surface
 │       ├── test_scanners.py     # Scanner units
 │       ├── test_scoring.py      # Rubric engine
 │       ├── test_discovery.py    # Subdomain discovery
 │       ├── test_multi_host.py   # Multi-host aggregation
+│       ├── test_full_scan_limits.py / test_apex_reliability.py  # Guard rails, apex never substituted
+│       ├── test_email_applicability.py  # Email N/A for hosts without MX
+│       ├── test_private_ip_guard.py     # SSRF guard
+│       ├── test_validation_fixes.py     # TLS trust (real local TLS server), header retry, dup headers
 │       ├── test_ai.py / test_ai_report.py / test_ai_validation.py
 │       └── test_db.py           # DB CRUD + persistence robustness
 │
@@ -96,8 +102,17 @@ SEC_SCAN_FINAL_PROJECT/
 │       ├── api.ts               # Typed API client: scan, listScans, getScan, deleteScan
 │       └── index.css / app.css  # Tailwind + custom styles
 │
+├── validation/                  # Repeatability + accuracy harness (see validation/README.md, Thai)
+│   ├── validate.py              # run / report / register — scans 14 domains via the live API
+│   ├── domains.txt              # The 14 validation domains (incl. badssl.com negative cases)
+│   ├── apply_reference.py       # Fills ref_manual from a saved reference file
+│   ├── reference/               # Saved SSL Labs + securityheaders.com verdicts (dated)
+│   ├── FINDINGS_2026-10-20.md   # Results + explanation of every disagreement
+│   └── out/                     # Run outputs (gitignored)
+│
 └── docs/
-    ├── ARCHITECTURE.md          # Detailed system documentation (this session)
+    ├── ARCHITECTURE.md          # Detailed system documentation
+    ├── STUDY_GUIDE_TH.md        # Deep-dive + committee Q&A (Thai)
     ├── DOCKER.md                # How to run with Docker, dev & prod (this session)
     ├── PROJECT_SUMMARY_AND_TIMELINE.md  # Overview + weekly timeline for presenting
     ├── DATABASE_SUMMARY.md      # W7 database deep-dive + advisor Q&A
@@ -116,3 +131,5 @@ SEC_SCAN_FINAL_PROJECT/
 | Change the UI | `frontend/src/App.tsx`, API types in `src/api.ts` |
 | DB schema | `backend/app/db/models.py` (no Alembic yet — create_all on startup) |
 | Run in Docker | `docker-compose.yml` (dev) / `docker-compose.prod.yml`, see `docs/DOCKER.md` |
+| Validate against real domains | `validation/README.md` |
+| Change full-scan limits | constants at the top of `backend/app/api/routes.py` |

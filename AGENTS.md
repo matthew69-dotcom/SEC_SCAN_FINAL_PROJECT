@@ -17,7 +17,10 @@ AI (GPT-4o-mini via LangChain) only writes human-readable summaries.
 
 ## Non-negotiable design rules
 
-1. **No active attacks** — observation only, never exploit or brute-force.
+1. **Non-intrusive / lightweight, no attacks** — observation only, never
+   exploit or brute-force auth. Describe it as "non-intrusive" or
+   "lightweight", **not "passive"**: it makes normal TLS/HTTP connections, TCP
+   connects to 6 ports (full mode) and resolves a ~120-name DNS wordlist.
 2. **AI never computes the numeric score.** Scoring is deterministic, driven by
    `backend/app/scoring/weights.yaml`.
 3. Every scanner returns `CheckResult` objects and **never raises**.
@@ -25,6 +28,13 @@ AI (GPT-4o-mini via LangChain) only writes human-readable summaries.
 5. Every API response includes version info (app + model + rubric).
 6. A scan must never fail because the DB is down — persistence is wrapped in
    try/except.
+7. **Every external phase is time-bounded** (discovery, per-host scans, Geo-IP,
+   ports, AI — see constants at the top of `api/routes.py`).
+8. **Never connect to non-public IPs** — `utils/netsafety.py`; such hosts are
+   reported (`dns.private_ip_exposed`) but not connected to or port-scanned.
+9. **Never substitute or invent results** — the apex result is never replaced
+   by another host's; show only what was observed and say when something
+   could not be measured (`scan.apex_unavailable`, "trust chain not verified").
 
 ## Commands
 
@@ -32,7 +42,7 @@ AI (GPT-4o-mini via LangChain) only writes human-readable summaries.
 # Backend (from backend/, inside a Python 3.12 venv)
 pip install -r requirements.txt
 uvicorn app.main:app --reload        # http://localhost:8000/docs
-pytest                               # all tests are offline (mocked network)
+pytest                               # 142 tests; offline except 4 live tests in test_scanners.py (google.com)
 ruff check .
 
 # Frontend (from frontend/)
@@ -40,6 +50,11 @@ npm install
 npm run dev                          # http://localhost:5173
 npx tsc -b --noEmit                  # the meaningful CI check (see gotcha #4)
 npm run lint
+
+# Validation (from repo root, backend running) — see validation/README.md
+python validation/validate.py run --runs 3
+python validation/apply_reference.py validation/out/<stamp>/comparison.csv
+python validation/validate.py report validation/out/<stamp>/comparison.csv
 
 # Docker (from repo root) — see docs/DOCKER.md
 docker compose up                                     # dev stack
@@ -50,13 +65,17 @@ docker compose -f docker-compose.prod.yml up --build  # prod-style stack
 
 - **Conventional Commits required:** `feat:`, `fix:`, `refactor:`, `test:`,
   `docs:`, `chore:`, `style:`, `perf:`.
-- Branches: `main` (stable) ← `DEV` (integration, PRs land here) ← personal
-  branches (`PHEERATHAD`, `PACHARAPOL`, `muanmet`) and `feat/*` branches.
+- Branches: `main` (first commit only; merge DEV→main only at release) ←
+  `DEV` (integration) ← `feat/*`, `fix/*`, `docs/*` branches cut from DEV.
+- Workflow: branch from DEV → `git add <specific files>` (never `-A`) → push →
+  PR with **base `DEV`** (GitHub sometimes defaults to `main` — check) →
+  review by `6631501118-cmd` → "Create a merge commit" → `git checkout DEV && git pull`.
 - Python: ruff, line length 110, target py312. Pydantic v2 models.
 - TypeScript: strict, function components only.
 - New security check = scanner emits `CheckResult` + entry in `weights.yaml`
   (checks not listed there are info-only and don't affect the score).
-- Tests must pass offline — mock all network I/O.
+- Tests must pass offline — mock all network I/O. `tests/conftest.py` blanks
+  `OPENAI_API_KEY` and mocks MX / private-IP lookups for every test.
 
 ## Gotchas (learned the hard way)
 
@@ -78,6 +97,12 @@ docker compose -f docker-compose.prod.yml up --build  # prod-style stack
    ISP/ASN are reliable.
 8. No Alembic migrations yet — tables are `create_all`'d on startup. Schema
    changes need a dropped/recreated dev DB.
+9. **Line endings:** after `git pull` on Windows, files on disk are CRLF
+   (autocrlf). Write CRLF to match; "LF will be replaced by CRLF" is harmless.
+10. **Every bug of Oct 2026 was found by scanning real domains**, not by unit
+    tests — run the validation harness before any demo/defense.
+11. SQLite returns naive datetimes even for `DateTime(timezone=True)`; API
+    schemas must mark them UTC (see `ScanHistoryItem.created_at`).
 
 ## Environment
 
@@ -85,10 +110,17 @@ docker compose -f docker-compose.prod.yml up --build  # prod-style stack
 `OPENAI_MODEL`, `DATABASE_URL`, `CORS_ORIGINS`. Quick AI key check:
 `python check_ai_live.py` → PASS means `generated_by_ai: True`.
 
-## Current status (July 2026)
+## Current status (October 2026)
 
-Weeks 1–7 done: scanners, scoring, discovery, AI, FE↔BE integration, DB history.
-W8: `tls.strong_ciphers` implemented (2026-07-14) — all rubric checks now
-covered, TLS can reach 30/30. Remaining: external validation, deploy
-(Railway + Vercel), merge `feat/fe-be-integration` + `feat/scan-history-db`
-→ `DEV`.
+Feature-complete for the rubric (TLS 30/30). Oct 2026 hardening, all merged
+into `DEV`: full-scan guard rails (#5), email N/A for hosts without MX (#6),
+SSRF guard (#7), apex reliability (#8), validation harness (#9), TLS trust
+chain + header retry + duplicate headers + History UTC fix (#10), header
+evidence with HTTP status/final URL (#11). Validation: 14/14 domains
+repeatable, 198/203 = 97.5% agreement with dns.google / SSL Labs /
+securityheaders.com (`validation/FINDINGS_2026-10-20.md`).
+
+Open: SSRF guard checks A records only (AAAA not yet — `mfu.ac.th` has AAAA
+`::1`); methodology questions for the advisor (web checks N/A on non-web
+hosts? apex grade vs worst-host grade in the UI); thesis update; deploy
+(Railway + Vercel) only if required.
