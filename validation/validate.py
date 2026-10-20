@@ -60,7 +60,7 @@ DOH_CHECKS = {
 }
 SSLLABS_CHECKS = {
     "tls.cert_valid": "SSL Labs: no trust issue (grade != T) and cert not expired",
-    "tls.hostname_match": "SSL Labs: grade != M (name mismatch)",
+    "tls.hostname_match": "SSL Labs: leaf cert has no hostname-mismatch issue (bit 8)",
     "tls.modern_protocol": "SSL Labs: supports TLS 1.2 or 1.3",
 }
 HEADER_CHECKS = {
@@ -192,12 +192,20 @@ def ssllabs_reference(client: httpx.Client, domain: str, email: str,
     modern = any(name == "TLS" and ver in ("1.2", "1.3") for name, ver in protocols)
 
     now_ms = time.time() * 1000
-    leaf = (data.get("certs") or [{}])[0]
+    # Leaf = first cert of the endpoint's first chain (falls back to certs[0]).
+    certs = {c.get("id"): c for c in data.get("certs") or []}
+    chain_ids = ((details.get("certChains") or [{}])[0]).get("certIds") or []
+    leaf = certs.get(chain_ids[0]) if chain_ids else (data.get("certs") or [{}])[0]
+    leaf = leaf or {}
     not_expired = leaf.get("notAfter", 0) > now_ms if leaf else None
+    issues = int(leaf.get("issues", 0) or 0)
 
     ref: dict[str, bool | None] = {
+        # T = trust problem (self-signed, unknown CA, expired, ...)
         "tls.cert_valid": (grade != "T") and bool(not_expired) if grade else None,
-        "tls.hostname_match": (grade != "M") if grade else None,
+        # Cert issue bit 8 = hostname mismatch. Grade M alone is not enough:
+        # when there is ALSO a trust problem SSL Labs shows T, hiding the M.
+        "tls.hostname_match": not (issues & 8) if leaf else None,
         "tls.modern_protocol": modern if protocols else None,
     }
     return ref, grade
