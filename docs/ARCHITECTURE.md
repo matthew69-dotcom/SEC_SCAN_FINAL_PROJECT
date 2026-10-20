@@ -194,7 +194,8 @@ correctness check is `tsc -b --noEmit` (see AGENTS.md gotcha about
 Accuracy = per-check agreement with independent references: dns.google
 DNS-over-HTTPS (automatic), SSL Labs and securityheaders.com (saved in
 `validation/reference/`, applied with `apply_reference.py`). Latest
-(2026-10-20): 14/14 repeatable, 198/203 = 97.5% agreement; every disagreement
+(2026-10-20, run 20261020-055742): 14/14 repeatable, 196/203 = 96.6% agreement
+(98.0% excluding 3 rows where mahidol.ac.th refuses the scanner); every disagreement
 is explained in `validation/FINDINGS_2026-10-20.md`.
 
 ## 7. Deployment (planned, only if required)

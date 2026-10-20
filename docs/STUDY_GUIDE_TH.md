@@ -169,14 +169,15 @@ React 19 + Vite 8 + TypeScript (strict) + Tailwind — `src/App.tsx` (~1,339 บ
 **Q: ระบบนี้ต่างจาก SSL Labs / securityheaders.com ยังไง?**
 A: เครื่องมือพวกนั้นเก่งด้านเดียวและดูทีละ host — ของเรารวม 4 ด้าน + ค้นหา
 subdomain อัตโนมัติ + ให้เกรดเดียวที่อธิบายได้ + AI สรุปเป็นภาษาคนสำหรับคนไม่ technical
-และเราใช้เครื่องมือพวกนั้นเป็น **baseline validate ความถูกต้อง** — ผลราย check ตรงกัน 97.5%
+และเราใช้เครื่องมือพวกนั้นเป็น **baseline validate ความถูกต้อง** — ผลราย check ตรงกัน 96.6%
 (เกรดรวมเทียบตรงๆ ไม่ได้เพราะ rubric ต่างกัน เช่น SSL Labs ให้ google.com เกรด B เพราะยังเปิด TLS 1.0/1.1)
 
 **Q: เชื่อคะแนนได้แค่ไหน? วัดความถูกต้องยังไง?**
 A: (1) engine deterministic 100% (pure function + rubric versioned) มี test **144 ตัว**
 (2) **Repeatability:** สแกน 14 โดเมน × 3 รอบ ได้เกรดเดิม **14/14** (youtube.com full scan ×3 = A/89 ทุกรอบ)
-(3) **Accuracy:** เทียบราย check กับเครื่องมืออิสระ **198/203 = 97.5%** — DNS/Email กับ Google DoH 98/98,
-TLS กับ SSL Labs 38/39, Headers กับ securityheaders.com 62/66 — แถวที่ไม่ตรงอธิบายได้ทุกแถว
+(3) **Accuracy:** เทียบราย check กับเครื่องมืออิสระ **196/203 = 96.6%** — DNS/Email กับ Google DoH 98/98,
+TLS กับ SSL Labs 38/39, Headers กับ securityheaders.com 60/66 — แถวที่ไม่ตรงอธิบายได้ทุกแถว
+(3 แถวคือ mahidol.ac.th บล็อก scanner ที่ระบุตัวตน — เราไม่ปลอมเป็น browser; ไม่นับแถวที่วัดไม่ได้ = 98.0%)
 (เว็บส่ง header ต่างกันตามผู้ขอ / SSL Labs ได้ cert คนละใบ)
 แถว wikipedia.org ไล่จนเจอว่าเป็นปัญหาฝั่งเรา: Wikimedia ตอบ 403 "robot policy" เพราะ User-Agent
 ไม่มีช่องทางติดต่อ → แก้แล้ว (ตัวอย่างดีของการที่ evidence บอก HTTP status ทำให้หาสาเหตุได้) ข้อควรพูดเอง: DNS reference ใช้ข้อมูล
@@ -273,7 +274,7 @@ dashboard + W7 database ร่วม (ปรับตามจริงก่อ
 - TLS เต็ม **30/30** แล้ว (strong_ciphers implement เสร็จ W8: AEAD + forward
   secrecy, ไม่มี legacy algo เช่น RC4/3DES/MD5, key ≥128 bits; TLS 1.3 ผ่านเสมอ)
 - Tests: **144** (offline ยกเว้น 4 live tests ที่ยิง google.com)
-- Validation: **14/14** repeatable · **198/203 = 97.5%** agreement (DNS/Email 98/98, TLS 38/39, Headers 62/66)
+- Validation: **14/14** repeatable · **196/203 = 96.6%** agreement (DNS/Email 98/98, TLS 38/39, Headers 60/66; 98.0% ไม่นับ mahidol ที่บล็อก)
 - Full scan: สูงสุด **25** host, concurrency **5**, timeout **20s**/host (apex **40s + retry**),
   discovery **45s**, Geo-IP **10s**, ports **20s**, AI **30s**, ports **80/443/8080/8443/8000/3000**
 - Email N/A → คิดคะแนนจาก **75**
