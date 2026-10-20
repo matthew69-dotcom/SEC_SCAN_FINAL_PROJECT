@@ -429,3 +429,13 @@ async def test_headers_request_sends_policy_compliant_user_agent():
         await header_scanner._fetch_headers("https://example.com/")
     assert seen["ua"] == SCANNER_USER_AGENT
     assert "https://" in SCANNER_USER_AGENT  # contact URL required by e.g. Wikimedia
+
+
+def test_user_agent_has_no_library_token():
+    """A "python-httpx" token made Cloudflare (thaigov.go.th) and Imperva
+    (chula.ac.th) serve block/challenge pages; keep the UA free of it."""
+    from app.config import SCANNER_USER_AGENT
+
+    assert "httpx" not in SCANNER_USER_AGENT.lower()
+    assert "python" not in SCANNER_USER_AGENT.lower()
+    assert SCANNER_USER_AGENT.startswith("MFU-DomainSecurityChecker/")
