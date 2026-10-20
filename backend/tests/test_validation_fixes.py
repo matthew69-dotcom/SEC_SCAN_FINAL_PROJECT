@@ -245,7 +245,8 @@ async def test_verify_chain_never_raises_on_closed_port():
 
 # ────────────────────────── 2. headers retry ────────────────────────────────
 
-_GOOD = httpx.Headers({"x-content-type-options": "nosniff"})
+_GOOD = header_scanner._Fetched(httpx.Headers({"x-content-type-options": "nosniff"}),
+                                200, "https://example.com/")
 
 
 @pytest.fixture
@@ -371,3 +372,35 @@ def test_history_aware_timestamp_unchanged():
     item = ScanHistoryItem(scan_id="x", domain="example.com", mode="single", score=70,
                            grade="C", findings_count=3, created_at=_dt(2026, 10, 20, 10, 0, tzinfo=bkk))
     assert item.created_at.utcoffset() == _td(hours=7)
+
+
+# ─────────────── 5. evidence says which response was judged ─────────────────
+
+async def test_failing_checks_show_status_and_final_url():
+    fetched = header_scanner._Fetched(httpx.Headers({"x-frame-options": "DENY"}),
+                                      403, "https://www.wikipedia.org/")
+    with patch("app.scanners.header_scanner._fetch_headers", AsyncMock(return_value=fetched)):
+        results = _by_id(await scan_headers("wikipedia.org"))
+    assert "(HTTP 403 at https://www.wikipedia.org/)" in results["headers.hsts"]["evidence"]
+    # passing checks keep their evidence unchanged
+    assert results["headers.frame_protection"]["evidence"] == "X-Frame-Options='DENY'"
+
+
+async def test_real_fetch_records_status_and_final_url():
+    """_fetch_headers fills status + final URL from the actual response."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "example.com":
+            return httpx.Response(301, headers={"location": "https://www.example.com/home"})
+        return httpx.Response(200, headers={"strict-transport-security": "max-age=31536000"})
+
+    real_client = httpx.AsyncClient
+
+    def fake_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    with patch("app.scanners.header_scanner.httpx.AsyncClient", fake_client):
+        fetched = await header_scanner._fetch_headers("https://example.com/")
+    assert fetched.status == 200
+    assert fetched.final_url == "https://www.example.com/home"
+    assert fetched.headers["strict-transport-security"] == "max-age=31536000"
