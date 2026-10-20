@@ -71,7 +71,7 @@ SEC_SCAN_FINAL_PROJECT/
 │   │       ├── geoip.py         # ip-api.com lookup (country/ISP/ASN reliable, location ≈)
 │   │       └── netsafety.py     # SSRF guard: is_public_ip / non_public_ips
 │   │
-│   └── tests/                   # pytest + pytest-asyncio — 142 tests, offline except 4 live google.com tests
+│   └── tests/                   # pytest + pytest-asyncio — 143 tests, offline except 4 live google.com tests
 │       ├── conftest.py          # Hermetic defaults: no OpenAI key, MX + private-IP lookups mocked
 │       ├── test_main.py         # API surface
 │       ├── test_scanners.py     # Scanner units

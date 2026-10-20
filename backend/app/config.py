@@ -13,3 +13,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Sent on every outbound HTTP request the scanner makes. Site operators'
+# bot policies (e.g. Wikimedia's User-Agent policy) require a contact URL;
+# without it wikipedia.org answered HTTP 403 and the headers check graded an
+# error page instead of the real site.
+SCANNER_USER_AGENT = (
+    "MFU-DomainSecurityChecker/0.1 "
+    "(+https://github.com/matthew69-dotcom/SEC_SCAN_FINAL_PROJECT) python-httpx"
+)

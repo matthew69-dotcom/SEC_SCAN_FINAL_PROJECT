@@ -175,7 +175,7 @@ prod stack, nginx does the same proxying.
 
 ## 5. Testing
 
-`pytest` + `pytest-asyncio` (`asyncio_mode=auto`), **142 test cases** (many
+`pytest` + `pytest-asyncio` (`asyncio_mode=auto`), **143 test cases** (many
 parametrised), offline except 4 live smoke tests in `test_scanners.py` that
 hit google.com. Covers API surface, each scanner, scoring engine, discovery,
 multi-host aggregation, full-scan limits, email applicability, SSRF guard,

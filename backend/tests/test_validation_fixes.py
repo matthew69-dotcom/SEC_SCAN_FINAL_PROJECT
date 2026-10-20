@@ -404,3 +404,28 @@ async def test_real_fetch_records_status_and_final_url():
     assert fetched.status == 200
     assert fetched.final_url == "https://www.example.com/home"
     assert fetched.headers["strict-transport-security"] == "max-age=31536000"
+
+
+# ─────────── 6. User-Agent carries a contact URL (bot policies) ─────────────
+
+async def test_headers_request_sends_policy_compliant_user_agent():
+    """wikipedia.org answered 403 ("Please respect our robot policy") to a
+    User-Agent without contact info; the scanner must identify itself."""
+    from app.config import SCANNER_USER_AGENT
+
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["ua"] = request.headers.get("user-agent")
+        return httpx.Response(200)
+
+    real_client = httpx.AsyncClient
+
+    def fake_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    with patch("app.scanners.header_scanner.httpx.AsyncClient", fake_client):
+        await header_scanner._fetch_headers("https://example.com/")
+    assert seen["ua"] == SCANNER_USER_AGENT
+    assert "https://" in SCANNER_USER_AGENT  # contact URL required by e.g. Wikimedia
