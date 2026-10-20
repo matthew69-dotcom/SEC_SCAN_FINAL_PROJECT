@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import re
 import ssl
+from dataclasses import dataclass
 
 import httpx
 
@@ -60,7 +61,25 @@ def _is_tls_failure(exc: BaseException) -> bool:
     return "CERTIFICATE_VERIFY_FAILED" in text or "[SSL" in text
 
 
-async def _fetch_headers(url: str, timeout: float = _FETCH_TIMEOUT) -> httpx.Headers:
+@dataclass
+class _Fetched:
+    """What we observed: final response headers + where they came from."""
+    headers: httpx.Headers
+    status: int | None = None
+    final_url: str = ""
+
+    def context(self) -> str:
+        """e.g. "HTTP 403 at https://www.wikipedia.org/" — appended to failing
+        checks so a missing header can be told apart from an error page."""
+        parts = []
+        if self.status is not None:
+            parts.append(f"HTTP {self.status}")
+        if self.final_url:
+            parts.append(f"at {self.final_url}")
+        return " ".join(parts)
+
+
+async def _fetch_headers(url: str, timeout: float = _FETCH_TIMEOUT) -> _Fetched:
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
@@ -71,7 +90,7 @@ async def _fetch_headers(url: str, timeout: float = _FETCH_TIMEOUT) -> httpx.Hea
         # the body. Large homepages (e.g. youtube.com) used to eat most of
         # the per-host time budget and made results vary run to run.
         async with client.stream("GET", url) as resp:
-            return resp.headers
+            return _Fetched(resp.headers, resp.status_code, str(resp.url))
 
 
 def _get_header(headers: httpx.Headers, name: str) -> str | None:
@@ -227,7 +246,7 @@ async def scan_headers(domain: str) -> list[CheckResult]:
     while True:
         attempts += 1
         try:
-            h = await _fetch_headers(url, _FETCH_TIMEOUT if attempts == 1 else _RETRY_TIMEOUT)
+            fetched = await _fetch_headers(url, _FETCH_TIMEOUT if attempts == 1 else _RETRY_TIMEOUT)
             break
         except (httpx.ConnectTimeout, httpx.ConnectError) as e:
             # One retry for transient network failures only (seen in
@@ -240,7 +259,8 @@ async def scan_headers(domain: str) -> list[CheckResult]:
         except httpx.HTTPError as e:
             return [_fetch_failed(e, attempts)]
 
-    return [
+    h = fetched.headers
+    checks = [
         _check_hsts(h),
         _check_csp(h),
         _check_frame_options(h),
@@ -248,3 +268,11 @@ async def scan_headers(domain: str) -> list[CheckResult]:
         _check_referrer_policy(h),
         _check_permissions_policy(h),
     ]
+    # Say which response was judged, so "header missing" on an error page
+    # (e.g. a 403 for our User-Agent) is visible in the evidence.
+    ctx = fetched.context()
+    if ctx:
+        for c in checks:
+            if not c["passed"]:
+                c["evidence"] = f"{c['evidence']} ({ctx})"
+    return checks
