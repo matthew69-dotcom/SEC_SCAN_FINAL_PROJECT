@@ -43,16 +43,29 @@ SSL Labs ใช้เวลา 1–3 นาทีต่อโดเมน (ใ�
 - `comparison.csv` — 1 แถว/(โดเมน, check): `ours`, `ref_auto`, `ref_manual`, `agree`, `reference_link`
 - `raw_scans.json` — response ดิบทุกครั้ง (หลักฐาน)
 
-## กรอกผลอ้างอิงเอง (headers / TLS ถ้าไม่ได้ใช้ SSL Labs API)
+## ผลอ้างอิงที่เก็บไว้แล้ว (TLS + headers) — ใช้ซ้ำได้
+
+ผล SSL Labs + securityheaders.com ของทั้ง 14 โดเมนเก็บไว้แล้วใน `validation/reference/`
+(วิธีเก็บ เกณฑ์ และคำอธิบายแถวที่ไม่ตรง: `FINDINGS_2026-10-20.md`) หลังรัน `run` ให้เติมด้วยคำสั่ง:
+
+```
+python validation/apply_reference.py validation/out/<เวลา>/comparison.csv
+python validation/validate.py report validation/out/<เวลา>/comparison.csv
+```
+
+ผลอ้างอิงเป็น snapshot — ถ้าสแกนห่างจากวันที่ในชื่อไฟล์มาก ให้เก็บใหม่ (หรือกรอกเองตามหัวข้อถัดไป)
+
+## กรอกผลอ้างอิงเอง (ถ้าต้องการเก็บใหม่)
 
 1. เปิด `comparison.csv` ใน Excel → คลิก `reference_link` ของแต่ละแถว
 2. กรอกคอลัมน์ `ref_manual` เป็น `pass` หรือ `fail` **ตามเกณฑ์เดียวกับระบบเรา**:
    - `headers.hsts`: มี HSTS **และ** max-age ≥ 15552000 (180 วัน)
-   - `headers.csp`: มี CSP และไม่ใช้ `'unsafe-inline'` ซ้ำหลาย directive
+   - `headers.csp`: มี CSP (แบบบังคับใช้ ไม่ใช่ Report-Only) และไม่ใช้ `'unsafe-inline'` ซ้ำหลาย directive
    - `headers.frame_protection`: มี X-Frame-Options **หรือ** CSP `frame-ancestors`
-   - `headers.nosniff`: `X-Content-Type-Options: nosniff`
-   - `headers.referrer_policy`: มี Referrer-Policy และไม่ใช่ `unsafe-url`
+   - `headers.nosniff`: `X-Content-Type-Options: nosniff` (ส่งซ้ำหลายครั้งก็ได้ ถ้าทุกค่าเป็น nosniff)
+   - `headers.referrer_policy`: มี Referrer-Policy และค่าสุดท้ายไม่ใช่ `unsafe-url`
    - `headers.permissions_policy`: มี Permissions-Policy
+   - TLS: `cert_valid` = SSL Labs ไม่ได้เกรด T และใบยังไม่หมดอายุ · `hostname_match` = ใบไม่มีปัญหา hostname mismatch · `modern_protocol` = รองรับ TLS 1.2/1.3
 3. Save เป็น **CSV UTF-8** แล้วรัน:
 
 ```
@@ -67,6 +80,6 @@ python validation/validate.py report validation/out/<เวลา>/comparison.cs
 - **DKIM** ไม่ได้เทียบ เพราะต้องรู้ selector (ทั้งเราและเครื่องมืออื่นต้องเดา)
 - เว็บใหญ่ (google, youtube) อาจส่ง header ต่างกันตาม IP/ประเทศ — สแกนกับเปิดเว็บอ้างอิงให้ใกล้เวลากัน
 - `badssl.com` ถูกออกแบบมาให้ TLS พังโดยตั้งใจ: `expired` → `tls.cert_valid` ต้อง fail, `wrong.host` → `tls.hostname_match` ต้อง fail
-- **คาดว่าจะไม่ตรง: `self-signed.badssl.com`** — `tls.cert_valid` ของเราตรวจแค่ **วันหมดอายุ** (ต่อแบบ `CERT_NONE` เพื่อให้เห็นใบรับรองแม้ไม่ผ่าน) ไม่ได้ตรวจว่า CA น่าเชื่อถือ ใบ self-signed จึงน่าจะ pass ในระบบเรา แต่ SSL Labs ให้เกรด T → นี่คือช่องว่างจริงที่ควรแก้หรือเขียนเป็นข้อจำกัด
+- `self-signed.badssl.com` → `tls.cert_valid` ต้อง fail (แก้แล้วตั้งแต่ `fix/validation-findings`: ระบบทำ handshake ครั้งที่ 2 แบบตรวจ trust chain; ก่อนหน้านั้นตรวจแค่วันหมดอายุจึง pass ผิด)
 
 แก้รายชื่อโดเมนได้ใน `validation/domains.txt`

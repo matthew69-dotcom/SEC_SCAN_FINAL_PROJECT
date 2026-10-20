@@ -2,7 +2,7 @@
 
 Checks:
 - Certificate is presented at all (port 443 reachable, TLS handshake completes)
-- Certificate not expired
+- Certificate not expired AND chains to a trusted CA (second, verifying handshake)
 - Certificate has >=30 days remaining (renewal buffer)
 - Hostname matches the cert (SAN or CN)
 - TLS protocol version negotiated is >= 1.2 (no 1.0/1.1)
@@ -41,6 +41,37 @@ def _connect_and_inspect(host: str, port: int = 443, timeout: float = 8.0) -> di
             protocol = ssock.version()
             cipher = ssock.cipher()  # (name, protocol, secret_bits) or None
             return {"cert_der": cert_der, "protocol": protocol, "cipher": cipher}
+
+
+def _verify_chain(host: str, port: int = 443, timeout: float = 8.0) -> tuple[bool | None, str]:
+    """Blocking helper: second handshake WITH certificate verification.
+
+    The observation handshake above uses CERT_NONE so we can still inspect
+    broken certificates; this one asks "would a normal client trust it?".
+    Hostname checking is deliberately OFF here — tls.hostname_match judges
+    that separately, so one mismatch is not penalised twice.
+
+    Returns (True, "") if the chain verifies, (False, reason) on a certificate
+    verification error, and (None, reason) if the handshake failed for some
+    other reason (timeout, protocol) — i.e. trust could not be determined.
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host):
+                return True, ""
+    except ssl.SSLCertVerificationError as e:
+        return False, e.verify_message or str(e)
+    except (OSError, ssl.SSLError, TimeoutError) as e:
+        return None, f"{e.__class__.__name__}: {e}"
+
+
+# OpenSSL verify codes that usually mean "the server did not send its
+# intermediate certificate" rather than "unknown/untrusted CA". Browsers often
+# hide this by fetching the intermediate themselves (AIA); other clients fail.
+_INCOMPLETE_CHAIN_HINT = ("unable to get local issuer certificate",)
 
 
 # Substrings that mark a cipher suite as legacy/broken regardless of anything else.
@@ -126,6 +157,11 @@ async def scan_tls(domain: str, port: int = 443) -> list[CheckResult]:
     not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(tzinfo=timezone.utc)
     days_left = (not_after - now).days
 
+    try:
+        trusted, trust_reason = await asyncio.to_thread(_verify_chain, domain, port)
+    except Exception as e:  # never let the trust probe break the scan
+        trusted, trust_reason = None, f"{e.__class__.__name__}: {e}"
+
     if days_left < 0:
         checks.append({
             "id": "tls.cert_valid", "category": "tls",
@@ -133,13 +169,36 @@ async def scan_tls(domain: str, port: int = 443) -> list[CheckResult]:
             "evidence": f"Expired {abs(days_left)} days ago ({not_after.date().isoformat()})",
             "remediation": "Renew the TLS certificate immediately (e.g. via Let's Encrypt / ACME).",
         })
+    elif trusted is False:
+        if any(h in trust_reason.lower() for h in _INCOMPLETE_CHAIN_HINT):
+            remediation = ("The chain could not be built to a trusted root. If browsers accept the site, "
+                           "the server is probably not sending its intermediate certificate — "
+                           "configure the full chain (leaf + intermediates).")
+        else:
+            remediation = ("Use a certificate issued by a publicly trusted CA "
+                           "(e.g. Let's Encrypt) instead of a self-signed or private-CA certificate.")
+        checks.append({
+            "id": "tls.cert_valid", "category": "tls",
+            "title": "Certificate is not trusted", "passed": False, "severity": "critical",
+            "evidence": f"Chain verification failed: {trust_reason} "
+                        f"(expires {not_after.date().isoformat()}, {days_left} days left)",
+            "remediation": remediation,
+        })
     else:
+        evidence = f"Expires {not_after.date().isoformat()} ({days_left} days left)"
+        if trusted is None:
+            # Could not run the verifying handshake — say so, don't guess.
+            evidence += f"; trust chain not verified ({trust_reason})"
+        else:
+            evidence += "; chain trusted"
         checks.append({
             "id": "tls.cert_valid", "category": "tls",
             "title": "Certificate is valid", "passed": True, "severity": "info",
-            "evidence": f"Expires {not_after.date().isoformat()} ({days_left} days left)",
+            "evidence": evidence,
             "remediation": "",
         })
+
+    if days_left >= 0:
         # ── Renewal buffer ──────────────────────────────
         if days_left >= 30:
             checks.append({

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -115,3 +115,12 @@ class ScanHistoryItem(BaseModel):
     grade: Grade
     findings_count: int
     created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _assume_utc(cls, v: datetime) -> datetime:
+        """Timestamps are stored in UTC, but SQLite drops the timezone, so they
+        come back naive and were serialised without "Z" — the browser then
+        read them as local time (7 h behind in Thailand). Mark naive values
+        as UTC so the JSON always carries an explicit offset."""
+        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v

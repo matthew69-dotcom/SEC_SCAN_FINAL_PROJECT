@@ -16,7 +16,9 @@ per RFC 7230) and only consider the response after redirect chain.
 """
 from __future__ import annotations
 
+import asyncio
 import re
+import ssl
 
 import httpx
 
@@ -24,6 +26,52 @@ from app.scanners.base import CheckResult
 
 
 _HSTS_MIN_MAX_AGE = 15_552_000  # 180 days, our policy threshold
+_FETCH_TIMEOUT = 10.0
+_RETRY_DELAY = 1.0     # seconds before the single retry
+_RETRY_TIMEOUT = 6.0   # shorter, so worst case 10 + 1 + 6 = 17s stays under
+                       # the 20s per-host budget in a full scan (routes.HOST_SCAN_TIMEOUT)
+
+
+def _tokens(value: str) -> list[str]:
+    """Split a header value that may hold several comma-joined copies.
+
+    httpx joins repeated headers with ", " (RFC 9110 field combining), so a
+    server that sends ``X-Content-Type-Options: nosniff`` twice shows up as
+    ``"nosniff, nosniff"``.
+    """
+    return [t.strip() for t in value.split(",") if t.strip()]
+
+
+def _is_tls_failure(exc: BaseException) -> bool:
+    """True if a connect error was really a TLS/certificate failure.
+
+    httpx wraps ssl errors (e.g. CERTIFICATE_VERIFY_FAILED) in ConnectError.
+    Those are deterministic — retrying cannot fix a bad certificate — so we
+    must not retry them.
+    """
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, ssl.SSLError):
+            return True
+        e = e.__cause__ or e.__context__
+    text = str(exc)
+    return "CERTIFICATE_VERIFY_FAILED" in text or "[SSL" in text
+
+
+async def _fetch_headers(url: str, timeout: float = _FETCH_TIMEOUT) -> httpx.Headers:
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": "MFU-DomainSecurityChecker/0.1 (senior-project)"},
+        verify=True,
+    ) as client:
+        # Stream so we only read the response HEADERS and never download
+        # the body. Large homepages (e.g. youtube.com) used to eat most of
+        # the per-host time budget and made results vary run to run.
+        async with client.stream("GET", url) as resp:
+            return resp.headers
 
 
 def _get_header(headers: httpx.Headers, name: str) -> str | None:
@@ -104,7 +152,8 @@ def _check_frame_options(headers: httpx.Headers) -> CheckResult:
 
 def _check_nosniff(headers: httpx.Headers) -> CheckResult:
     val = _get_header(headers, "x-content-type-options")
-    if val and val.lower() == "nosniff":
+    # A duplicated header ("nosniff, nosniff") is still nosniff.
+    if val and _tokens(val) and all(t.lower() == "nosniff" for t in _tokens(val)):
         return {
             "id": "headers.nosniff", "category": "headers",
             "title": "X-Content-Type-Options: nosniff set", "passed": True, "severity": "info",
@@ -127,7 +176,10 @@ def _check_referrer_policy(headers: httpx.Headers) -> CheckResult:
             "evidence": "header not present",
             "remediation": "Add: Referrer-Policy: strict-origin-when-cross-origin",
         }
-    if val.lower() == "unsafe-url":
+    # Referrer-Policy may list fallbacks; browsers use the LAST value they
+    # understand, so judge the effective (last) token.
+    effective = (_tokens(val) or [val])[-1].lower()
+    if effective == "unsafe-url":
         return {
             "id": "headers.referrer_policy", "category": "headers",
             "title": "Referrer-Policy set to unsafe-url", "passed": False, "severity": "low",
@@ -158,28 +210,35 @@ def _check_permissions_policy(headers: httpx.Headers) -> CheckResult:
     }
 
 
+def _fetch_failed(e: BaseException, attempts: int) -> CheckResult:
+    suffix = f" (after {attempts} attempts)" if attempts > 1 else ""
+    return {
+        "id": "headers.fetch", "category": "headers",
+        "title": "Could not fetch HTTPS response", "passed": False, "severity": "high",
+        "evidence": f"{e.__class__.__name__}: {e}{suffix}",
+        "remediation": "Ensure the site responds to HTTPS GET on the root path.",
+    }
+
+
 async def scan_headers(domain: str) -> list[CheckResult]:
     """Fetch https://<domain>/ and evaluate response security headers."""
     url = f"https://{domain}/"
-    try:
-        async with httpx.AsyncClient(
-            timeout=10.0,
-            follow_redirects=True,
-            headers={"User-Agent": "MFU-DomainSecurityChecker/0.1 (senior-project)"},
-            verify=True,
-        ) as client:
-            # Stream so we only read the response HEADERS and never download
-            # the body. Large homepages (e.g. youtube.com) used to eat most of
-            # the per-host time budget and made results vary run to run.
-            async with client.stream("GET", url) as resp:
-                h = resp.headers
-    except httpx.HTTPError as e:
-        return [{
-            "id": "headers.fetch", "category": "headers",
-            "title": "Could not fetch HTTPS response", "passed": False, "severity": "high",
-            "evidence": f"{e.__class__.__name__}: {e}",
-            "remediation": "Ensure the site responds to HTTPS GET on the root path.",
-        }]
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            h = await _fetch_headers(url, _FETCH_TIMEOUT if attempts == 1 else _RETRY_TIMEOUT)
+            break
+        except (httpx.ConnectTimeout, httpx.ConnectError) as e:
+            # One retry for transient network failures only (seen in
+            # validation: a single ConnectTimeout cost thaigov.go.th 22
+            # points). TLS/certificate failures are never retried.
+            if attempts == 1 and not _is_tls_failure(e):
+                await asyncio.sleep(_RETRY_DELAY)
+                continue
+            return [_fetch_failed(e, attempts)]
+        except httpx.HTTPError as e:
+            return [_fetch_failed(e, attempts)]
 
     return [
         _check_hsts(h),

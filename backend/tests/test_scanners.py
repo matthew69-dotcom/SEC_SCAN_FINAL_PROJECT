@@ -185,7 +185,8 @@ async def test_tls_strong_ciphers_offline_strong():
         "protocol": "TLSv1.3",
         "cipher": ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256),
     }
-    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake):
+    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake), \
+         patch("app.scanners.tls_scanner._verify_chain", return_value=(True, "")):
         results = await scan_tls("example.com")
     by_id = {r["id"]: r for r in results}
     sc = by_id["tls.strong_ciphers"]
@@ -201,7 +202,8 @@ async def test_tls_strong_ciphers_offline_weak():
         "protocol": "TLSv1.2",
         "cipher": ("AES256-SHA", "TLSv1.2", 256),  # static RSA + CBC
     }
-    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake):
+    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake), \
+         patch("app.scanners.tls_scanner._verify_chain", return_value=(True, "")):
         results = await scan_tls("example.com")
     by_id = {r["id"]: r for r in results}
     sc = by_id["tls.strong_ciphers"]
@@ -213,7 +215,8 @@ async def test_tls_strong_ciphers_offline_weak():
 @pytest.mark.asyncio
 async def test_tls_strong_ciphers_missing_cipher_fails_safe():
     fake = {"cert_der": _fake_cert_der(), "protocol": "TLSv1.2", "cipher": None}
-    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake):
+    with patch("app.scanners.tls_scanner._connect_and_inspect", return_value=fake), \
+         patch("app.scanners.tls_scanner._verify_chain", return_value=(True, "")):
         results = await scan_tls("example.com")
     by_id = {r["id"]: r for r in results}
     assert by_id["tls.strong_ciphers"]["passed"] is False
