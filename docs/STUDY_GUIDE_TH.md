@@ -173,13 +173,16 @@ subdomain อัตโนมัติ + ให้เกรดเดียวท�
 (เกรดรวมเทียบตรงๆ ไม่ได้เพราะ rubric ต่างกัน เช่น SSL Labs ให้ google.com เกรด B เพราะยังเปิด TLS 1.0/1.1)
 
 **Q: เชื่อคะแนนได้แค่ไหน? วัดความถูกต้องยังไง?**
-A: (1) engine deterministic 100% (pure function + rubric versioned) มี test **142 ตัว**
+A: (1) engine deterministic 100% (pure function + rubric versioned) มี test **143 ตัว**
 (2) **Repeatability:** สแกน 14 โดเมน × 3 รอบ ได้เกรดเดิม **14/14** (youtube.com full scan ×3 = A/89 ทุกรอบ)
 (3) **Accuracy:** เทียบราย check กับเครื่องมืออิสระ **198/203 = 97.5%** — DNS/Email กับ Google DoH 98/98,
 TLS กับ SSL Labs 38/39, Headers กับ securityheaders.com 62/66 — แถวที่ไม่ตรงอธิบายได้ทุกแถว
-(เว็บส่ง header ต่างกันตามผู้ขอ / SSL Labs ได้ cert คนละใบ) ข้อควรพูดเอง: DNS reference ใช้ข้อมูล
+(เว็บส่ง header ต่างกันตามผู้ขอ / SSL Labs ได้ cert คนละใบ)
+แถว wikipedia.org ไล่จนเจอว่าเป็นปัญหาฝั่งเรา: Wikimedia ตอบ 403 "robot policy" เพราะ User-Agent
+ไม่มีช่องทางติดต่อ → แก้แล้ว (ตัวอย่างดีของการที่ evidence บอก HTTP status ทำให้หาสาเหตุได้) ข้อควรพูดเอง: DNS reference ใช้ข้อมูล
 resolver ของ Google เหมือนเรา จึงพิสูจน์ว่า "โค้ดตีความถูก" ไม่ใช่ข้อมูลอิสระ 100%
-(4) validation จับบั๊กจริงได้ 2 ตัว (self-signed ผ่านผิด, header ซ้ำ) และแก้แล้วพร้อม regression test
+(4) validation จับปัญหาจริงได้ 3 ตัว (self-signed ผ่านผิด, header ซ้ำ, ถูก Wikimedia บล็อกเพราะ User-Agent)
+และแก้แล้วพร้อม regression test
 
 **Q: สแกนโดเมนของคนอื่นถูกกฎหมายไหม?**
 A: เราอ่านเฉพาะข้อมูล public ที่ server ยินดีบอกทุกคนอยู่แล้ว (DNS, cert, headers)
@@ -269,7 +272,7 @@ dashboard + W7 database ร่วม (ปรับตามจริงก่อ
 - Rubric: **TLS 30 / Headers 25 / Email 25 / DNS 20** · Grade: **95 / 85 / 75 / 60 / 40**
 - TLS เต็ม **30/30** แล้ว (strong_ciphers implement เสร็จ W8: AEAD + forward
   secrecy, ไม่มี legacy algo เช่น RC4/3DES/MD5, key ≥128 bits; TLS 1.3 ผ่านเสมอ)
-- Tests: **142** (offline ยกเว้น 4 live tests ที่ยิง google.com)
+- Tests: **143** (offline ยกเว้น 4 live tests ที่ยิง google.com)
 - Validation: **14/14** repeatable · **198/203 = 97.5%** agreement (DNS/Email 98/98, TLS 38/39, Headers 62/66)
 - Full scan: สูงสุด **25** host, concurrency **5**, timeout **20s**/host (apex **40s + retry**),
   discovery **45s**, Geo-IP **10s**, ports **20s**, AI **30s**, ports **80/443/8080/8443/8000/3000**

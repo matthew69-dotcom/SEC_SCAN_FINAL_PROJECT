@@ -18,6 +18,8 @@ from typing import Set
 
 import httpx
 
+from app.config import SCANNER_USER_AGENT
+
 logger = logging.getLogger(__name__)
 
 CRTSH_URL = "https://crt.sh/"
@@ -50,7 +52,10 @@ async def fetch_crtsh_subdomains(domain: str) -> Set[str]:
 
     try:
         async def _fetch():
-            async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, follow_redirects=True,
+                headers={"User-Agent": SCANNER_USER_AGENT},
+            ) as client:
                 resp = await client.get(CRTSH_URL, params=params)
                 resp.raise_for_status()
                 return resp.json()

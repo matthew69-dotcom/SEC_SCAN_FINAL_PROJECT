@@ -157,7 +157,7 @@ A: วัด 2 แบบกับ 14 โดเมน (รวม badssl.com ท�
   - Apex ไม่ถูกแทนด้วยผลของ subdomain (40 วินาที + retry)
   - Validation harness + ผลเทียบ SSL Labs / securityheaders.com ครบ 14 โดเมน
   - TLS ตรวจ trust chain (self-signed = fail), header fetch retry 1 ครั้ง, header ซ้ำ, เวลาใน History เป็นเวลาไทย
-- ✅ Tests: **142** · Validation: **14/14** repeatable, **97.5%** agreement
+- ✅ Tests: **143** · Validation: **14/14** repeatable, **97.5%** agreement
 - ⬜ คุยอาจารย์: วันสอบ, template เล่ม, ต้อง deploy ไหม, คำถาม methodology 2 ข้อ
   (web checks N/A สำหรับ host ที่ไม่ใช่เว็บ? / การ์ดใหญ่โชว์เกรด apex แต่สรุปโชว์เกรด worst-host)
 - ⬜ SSRF guard ยังไม่ตรวจ AAAA record (`mfu.ac.th` มี AAAA = `::1`)

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.config import SCANNER_USER_AGENT
 from app.scanners.base import CheckResult
 
 
@@ -83,7 +84,7 @@ async def _fetch_headers(url: str, timeout: float = _FETCH_TIMEOUT) -> _Fetched:
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
-        headers={"User-Agent": "MFU-DomainSecurityChecker/0.1 (senior-project)"},
+        headers={"User-Agent": SCANNER_USER_AGENT},
         verify=True,
     ) as client:
         # Stream so we only read the response HEADERS and never download

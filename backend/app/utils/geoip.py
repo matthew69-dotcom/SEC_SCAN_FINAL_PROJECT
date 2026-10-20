@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.config import SCANNER_USER_AGENT
+
 logger = logging.getLogger(__name__)
 
 GEOIP_URL = "http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org,as"
@@ -38,7 +40,7 @@ async def lookup(ip: str) -> GeoInfo:
     if not ip or ip in ("-", "unknown"):
         return GeoInfo()
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": SCANNER_USER_AGENT}) as client:
             resp = await client.get(GEOIP_URL.format(ip=ip))
             data = resp.json()
             if data.get("status") != "success":
