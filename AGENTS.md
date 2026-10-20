@@ -117,7 +117,7 @@ into `DEV`: full-scan guard rails (#5), email N/A for hosts without MX (#6),
 SSRF guard (#7), apex reliability (#8), validation harness (#9), TLS trust
 chain + header retry + duplicate headers + History UTC fix (#10), header
 evidence with HTTP status/final URL (#11). Validation: 14/14 domains
-repeatable, 198/203 = 97.5% agreement with dns.google / SSL Labs /
+repeatable, 196/203 = 96.6% agreement (98.0% excluding 3 rows where mahidol.ac.th refuses the scanner) with dns.google / SSL Labs /
 securityheaders.com (`validation/FINDINGS_2026-10-20.md`).
 
 Open: SSRF guard checks A records only (AAAA not yet — `mfu.ac.th` has AAAA
