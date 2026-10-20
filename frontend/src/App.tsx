@@ -494,6 +494,15 @@ function ResultPage({
     result.findings.some(f => !f.passed && f.severity === "critical"),
   );
   const gradeRing = GRADE_RING[result.grade] ?? GRADE_RING["F"];
+  // Full scan: the headline is the apex host itself; the domain grade is the
+  // worst host. Label both so the numbers on screen can't be confused.
+  const isFull         = result.mode === "full";
+  const apexUnavailable = result.findings.some(f => f.id === "scan.apex_unavailable");
+  const headlineLabel  = !isFull ? null
+    : apexUnavailable ? "Domain (worst host) — apex could not be scanned"
+    : `Apex host · ${result.domain}`;
+  const showDomainGrade = isFull && !apexUnavailable
+    && result.domain_grade !== null && result.domain_score !== null;
 
   const grouped: Record<Severity, Finding[]> = {
     critical: [], high: [], medium: [], low: [], info: [],
@@ -616,10 +625,22 @@ function ResultPage({
 
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card className="flex flex-col items-center justify-center p-8 text-center">
-            <p className="mb-3 font-mono text-[10px] uppercase tracking-widest text-slate-600">Security Grade</p>
-            <div className={`flex h-28 w-28 items-center justify-center rounded-full border-4 font-mono text-5xl font-black ${gradeRing}`}>
+            <p className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-600">Security Grade</p>
+            {headlineLabel && (
+              <p className="mb-3 font-mono text-[10px] text-slate-500">{headlineLabel}</p>
+            )}
+            <div className={`${headlineLabel ? "" : "mt-2 "}flex h-28 w-28 items-center justify-center rounded-full border-4 font-mono text-5xl font-black ${gradeRing}`}>
               {result.grade}
             </div>
+            {showDomainGrade && (
+              <p className="mt-4 font-mono text-xs text-slate-500">
+                Domain (worst of {result.hosts_scanned} host{result.hosts_scanned !== 1 ? "s" : ""}):{" "}
+                <span className={`rounded border px-1.5 py-0.5 font-bold ${GRADE_PILL[result.domain_grade as Grade] ?? ""}`}>
+                  {result.domain_grade}
+                </span>{" "}
+                <span className="text-slate-400">{result.domain_score}/100</span>
+              </p>
+            )}
           </Card>
 
           <Card className="flex flex-col justify-center p-6">
@@ -647,24 +668,29 @@ function ResultPage({
             <p className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-600">Risk Level</p>
             <p className={`font-mono text-3xl font-black ${risk.cls}`}>{risk.label}</p>
             <p className="mt-2 font-mono text-xs text-slate-600">
-              {result.findings.length} finding{result.findings.length !== 1 ? "s" : ""} total
+              {result.findings.length} finding{result.findings.length !== 1 ? "s" : ""}
+              {isFull && !apexUnavailable ? ` on ${result.domain}` : " total"}
             </p>
-            {result.mode === "full" && result.domain_avg_score !== null && (
+            {isFull && result.domain_avg_score !== null && (
               <p className="mt-1 font-mono text-xs text-slate-600">
-                Avg host score: <span className="text-slate-400">{result.domain_avg_score}/100</span>
+                Average of {result.hosts_scanned} host{result.hosts_scanned !== 1 ? "s" : ""}:{" "}
+                <span className="text-slate-400">{result.domain_avg_score}/100</span>
               </p>
             )}
           </Card>
         </div>
 
+        {/* Deterministic text built by the backend from the scan numbers —
+            NOT AI output. Kept visually distinct from the AI card below so it
+            never looks like the AI is talking about the score. */}
         {result.summary && (
-          <Card glow="cyan" className="mb-8 p-5">
+          <Card className="mb-8 p-5">
             <div className="flex items-start gap-3">
-              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-cyan-500/30 bg-cyan-500/10 font-mono text-xs font-bold text-cyan-400">
-                AI
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-slate-600/40 bg-slate-500/10 font-mono text-xs font-bold text-slate-400">
+                i
               </div>
               <div>
-                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-cyan-400/60">AI Security Summary</p>
+                <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">Scan Summary</p>
                 <p className="text-sm leading-relaxed text-slate-400">{result.summary}</p>
               </div>
             </div>
