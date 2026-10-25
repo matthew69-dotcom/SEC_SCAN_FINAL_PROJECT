@@ -17,7 +17,7 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
@@ -41,7 +41,8 @@ from app.scanners.tls_scanner import scan_tls
 from app.scanners.port_scanner import scan_ports, open_port_numbers
 from app.scoring import score_checks
 from app.utils.geoip import lookup_many
-from app.utils.netsafety import is_public_ip, non_public_ips
+from app.utils.netsafety import domain_exists, is_public_ip, non_public_ips
+from app.utils.ratelimit import client_ip, limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -226,8 +227,36 @@ def health():
 @router.post("/scan", response_model=ScanResponse)
 async def scan(
     req: ScanRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> ScanResponse:
+    # Abuse guard: every scan costs third-party work (and an OpenAI call in
+    # Full mode), so limit how often one client can start scans.
+    limiter.check(client_ip(request), req.mode)
+
+    # Never grade a domain that does not exist (gibberish like
+    # "ivjowsefhvwieh.com" used to get F 3/100 and land in History).
+    # Only a definite NXDOMAIN rejects; an unknown answer lets the scan run.
+    if await domain_exists(req.domain) is False:
+        try:
+            shown = req.domain.encode("ascii").decode("idna")  # xn--o3cw4h.com -> ไทย.com
+        except UnicodeError:
+            shown = req.domain
+        raise HTTPException(
+            status_code=422,
+            detail=f"{shown} does not exist (no such name in DNS). Check the spelling.",
+        )
+
+    if req.mode == "full":
+        limiter.full_running += 1
+        try:
+            return await _scan(req, session)
+        finally:
+            limiter.full_running -= 1
+    return await _scan(req, session)
+
+
+async def _scan(req: ScanRequest, session: AsyncSession) -> ScanResponse:
     version = VersionInfo(
         app=settings.app_version,
         model=settings.openai_model,

@@ -7,7 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-DOMAIN_RE = re.compile(r"^([a-z0-9-]+\.)+[a-z]{2,}$")
+# RFC 1123 host name: labels of 1-63 letters/digits/hyphens that do not start
+# or end with a hyphen, total <= 253 characters, alphabetic TLD (so bare IP
+# addresses are rejected). Internationalised names arrive here as punycode.
+_LABEL = r"(?!-)[a-z0-9-]{1,63}(?<!-)"
+DOMAIN_RE = re.compile(rf"^(?=.{{1,253}}$)(?:{_LABEL}\.)+(?:[a-z]{{2,63}}|xn--[a-z0-9-]{{1,59}})$")
 Severity = Literal["critical", "high", "medium", "low", "info"]
 Grade = Literal["A+", "A", "B", "C", "D", "F"]
 
@@ -22,9 +26,14 @@ class ScanRequest(BaseModel):
     def normalize_and_validate(cls, v: str) -> str:
         v = v.strip().lower()
         # strip protocol if user typed https://...
-        v = re.sub(r"^https?://", "", v).rstrip("/")
+        v = re.sub(r"^https?://", "", v).rstrip("/").rstrip(".")
+        # Thai / other internationalised names -> punycode (ไทย.com -> xn--...)
+        try:
+            v = v.encode("idna").decode("ascii")
+        except UnicodeError:
+            raise ValueError("Enter a domain name like example.com") from None
         if not DOMAIN_RE.match(v):
-            raise ValueError("Invalid domain format")
+            raise ValueError("Enter a domain name like example.com")
         return v
 
 
