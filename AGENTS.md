@@ -35,6 +35,9 @@ AI (GPT-4o-mini via LangChain) only writes human-readable summaries.
 9. **Never substitute or invent results** — the apex result is never replaced
    by another host's; show only what was observed and say when something
    could not be measured (`scan.apex_unavailable`, "trust chain not verified").
+   A domain that does not exist (NXDOMAIN) is rejected, never graded.
+10. **Every scan is rate-limited per client** (`utils/ratelimit.py`) — scans cost
+    third-party work and, in Full mode, a paid OpenAI call.
 
 ## Commands
 
@@ -42,7 +45,7 @@ AI (GPT-4o-mini via LangChain) only writes human-readable summaries.
 # Backend (from backend/, inside a Python 3.12 venv)
 pip install -r requirements.txt
 uvicorn app.main:app --reload        # http://localhost:8000/docs
-pytest                               # 144 tests; offline except 4 live tests in test_scanners.py (google.com)
+pytest                               # 186 tests; offline except 4 live tests in test_scanners.py (google.com)
 ruff check .
 
 # Frontend (from frontend/)

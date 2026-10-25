@@ -69,9 +69,10 @@ SEC_SCAN_FINAL_PROJECT/
 │   │   │
 │   │   └── utils/
 │   │       ├── geoip.py         # ip-api.com lookup (country/ISP/ASN reliable, location ≈)
-│   │       └── netsafety.py     # SSRF guard: is_public_ip / non_public_ips
+│   │       ├── netsafety.py     # SSRF guard: is_public_ip / non_public_ips; domain_exists (NXDOMAIN)
+│   │       └── ratelimit.py     # Per-IP scan limits (10 single / 2 full per min) + full-scan cap
 │   │
-│   └── tests/                   # pytest + pytest-asyncio — 144 tests, offline except 4 live google.com tests
+│   └── tests/                   # pytest + pytest-asyncio — 186 tests, offline except 4 live google.com tests
 │       ├── conftest.py          # Hermetic defaults: no OpenAI key, MX + private-IP lookups mocked
 │       ├── test_main.py         # API surface
 │       ├── test_scanners.py     # Scanner units
@@ -82,6 +83,7 @@ SEC_SCAN_FINAL_PROJECT/
 │       ├── test_email_applicability.py  # Email N/A for hosts without MX
 │       ├── test_private_ip_guard.py     # SSRF guard
 │       ├── test_validation_fixes.py     # TLS trust (real local TLS server), header retry, dup headers
+│       ├── test_input_guard.py          # Domain syntax/IDN, NXDOMAIN rejection, rate limit, client IP
 │       ├── test_ai.py / test_ai_report.py / test_ai_validation.py
 │       └── test_db.py           # DB CRUD + persistence robustness
 │

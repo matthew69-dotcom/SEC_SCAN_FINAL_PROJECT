@@ -33,3 +33,22 @@ def _hermetic_private_ip_check():
     """Default: every host resolves to public IPs only (no real DNS in tests)."""
     with patch("app.api.routes.non_public_ips", AsyncMock(return_value=[])) as m:
         yield m
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_domain_exists():
+    """Default: every scanned domain exists (no real DNS in tests)."""
+    with patch("app.api.routes.domain_exists", AsyncMock(return_value=True)) as m:
+        yield m
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit():
+    """Most tests fire many scans; rate-limit tests re-enable it explicitly."""
+    from app.utils.ratelimit import limiter
+
+    limiter.enabled = False
+    limiter.reset()
+    yield limiter
+    limiter.enabled = True
+    limiter.reset()

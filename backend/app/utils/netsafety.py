@@ -12,6 +12,7 @@ import ipaddress
 import logging
 
 import dns.asyncresolver
+import dns.resolver
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,27 @@ async def resolve_ipv4(hostname: str) -> list[str]:
         return []
 
 
+async def domain_exists(name: str) -> bool | None:
+    """Does *name* exist in DNS? Uses the pinned public resolvers.
+
+    False only for an authoritative NXDOMAIN ("no such name"). A name that
+    exists without an A record (e.g. mail-only) is True. Timeouts and other
+    errors return None — unknown is never treated as "does not exist".
+    """
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = _RESOLVERS
+    resolver.lifetime = 5.0
+    try:
+        await resolver.resolve(name, "A")
+        return True
+    except dns.resolver.NXDOMAIN:
+        return False
+    except dns.resolver.NoAnswer:
+        return True
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def non_public_ips(hostname: str, known_ip: str | None = None) -> list[str]:
     """Return the non-public addresses *hostname* resolves to (empty = safe).
 
@@ -55,4 +77,4 @@ async def non_public_ips(hostname: str, known_ip: str | None = None) -> list[str
     return [ip for ip in ips if not is_public_ip(ip)]
 
 
-__all__ = ["is_public_ip", "non_public_ips", "resolve_ipv4"]
+__all__ = ["domain_exists", "is_public_ip", "non_public_ips", "resolve_ipv4"]

@@ -68,7 +68,20 @@ Every response carries version info: app version + AI model + rubric version.
 | `GET /api/scans/{id}` | Full stored `ScanResponse` |
 | `DELETE /api/scans/{id}` | Remove a history entry |
 
-Schemas are Pydantic v2 (`schemas.py`). Rate limiting via slowapi.
+Schemas are Pydantic v2 (`schemas.py`). Input and abuse guards on `POST /api/scan`:
+
+- **Domain syntax** (RFC 1123): labels of 1-63 letters/digits/hyphens, no leading or
+  trailing hyphen, total <= 253, alphabetic TLD (bare IPs rejected). `https://`, a
+  trailing `/` or `.` and surrounding spaces are stripped; Thai/other IDN names are
+  converted to punycode (`ไทย.com` -> `xn--o3cw4h.com`).
+- **Domain must exist**: `netsafety.domain_exists()` asks the pinned resolvers; an
+  NXDOMAIN answer returns HTTP 422 "does not exist" before any scan or save (gibberish
+  such as `ivjowsefhvwieh.com` used to be graded F 3/100 and stored). Timeouts never reject.
+- **Rate limit** (`utils/ratelimit.py`, in-memory sliding window): per client IP 10 Single
+  and 2 Full scans per minute, and at most 3 Full scans running at once; HTTP 429 with
+  `Retry-After`. Behind our own proxy (Vite dev server / nginx) the client IP comes from
+  `X-Real-IP`, which is trusted only when the request arrives from a loopback/private address.
+  Single-process only — a multi-process deployment would need a shared store (Redis).
 `ScanHistoryItem.created_at` is always serialised with a UTC offset (SQLite
 returns naive datetimes; without it the browser showed UTC as local time).
 
@@ -175,7 +188,7 @@ prod stack, nginx does the same proxying.
 
 ## 5. Testing
 
-`pytest` + `pytest-asyncio` (`asyncio_mode=auto`), **144 test cases** (many
+`pytest` + `pytest-asyncio` (`asyncio_mode=auto`), **186 test cases** (many
 parametrised), offline except 4 live smoke tests in `test_scanners.py` that
 hit google.com. Covers API surface, each scanner, scoring engine, discovery,
 multi-host aggregation, full-scan limits, email applicability, SSRF guard,

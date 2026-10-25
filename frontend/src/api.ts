@@ -78,6 +78,21 @@ export interface ScanResponse {
   scanned_at: string; // injected client-side
 }
 
+/** Turn an error response from POST /api/scan into a sentence for the user.
+ *  422 = invalid or non-existent domain, 429 = rate limit (detail says how
+ *  long to wait). Pydantic's "Value error, " prefix is not shown. */
+async function scanErrorMessage(res: Response): Promise<string> {
+  const err = await res.json().catch(() => ({}));
+  const detail = err?.detail;
+  if (Array.isArray(detail)) {
+    const msg = String(detail[0]?.msg ?? "").replace(/^Value error,\s*/i, "");
+    return msg || "Enter a domain name like example.com";
+  }
+  if (typeof detail === "string" && detail) return detail;
+  if (res.status === 429) return "Too many scans. Please wait a minute and try again.";
+  return `Scan failed (HTTP ${res.status}). Please try again.`;
+}
+
 export async function scanDomain(
   domain: string,
   mode: ScanMode = "single"
@@ -87,12 +102,7 @@ export async function scanDomain(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ domain, mode }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(
-      err.detail?.[0]?.msg ?? err.detail ?? `HTTP ${res.status}`
-    );
-  }
+  if (!res.ok) throw new Error(await scanErrorMessage(res));
   const data = await res.json();
   // Inject client-side timestamp + safe fallbacks for optional fields
   return {

@@ -173,7 +173,7 @@ subdomain อัตโนมัติ + ให้เกรดเดียวท�
 (เกรดรวมเทียบตรงๆ ไม่ได้เพราะ rubric ต่างกัน เช่น SSL Labs ให้ google.com เกรด B เพราะยังเปิด TLS 1.0/1.1)
 
 **Q: เชื่อคะแนนได้แค่ไหน? วัดความถูกต้องยังไง?**
-A: (1) engine deterministic 100% (pure function + rubric versioned) มี test **144 ตัว**
+A: (1) engine deterministic 100% (pure function + rubric versioned) มี test **186 ตัว**
 (2) **Repeatability:** สแกน 14 โดเมน × 3 รอบ ได้เกรดเดิม **14/14** (youtube.com full scan ×3 = A/89 ทุกรอบ)
 (3) **Accuracy:** เทียบราย check กับเครื่องมืออิสระ **196/203 = 96.6%** — DNS/Email กับ Google DoH 98/98,
 TLS กับ SSL Labs 38/39, Headers กับ securityheaders.com 60/66 — แถวที่ไม่ตรงอธิบายได้ทุกแถว
@@ -208,6 +208,13 @@ A: input ของ AI คือ findings ที่ตรวจเสร็จแ
 A: DKIM ต้องรู้ selector ถึงจะ query ได้ เราจึงลอง common selectors
 (default, google, selector1 ฯลฯ) — เจอ = ผ่าน ไม่เจอ = อาจมีแต่เราไม่เห็น
 นี่คือเหตุผลที่ DKIM มี weight แค่ 2 จาก 25 ของ email (ยอมรับ limitation ตรงๆ)
+
+**Q: ถ้าผู้ใช้พิมพ์มั่ว ๆ หรือกดสแกนรัว ๆ ล่ะ?**
+A: มี 3 ชั้น (1) **รูปแบบ** ตาม RFC 1123 — `ivjowsefhvwieh`, `<script>`, `127.0.0.1`, `google.com; rm -rf /` ถูกปฏิเสธ (422)
+ก่อนทำอะไรเลย; ชื่อโดเมนภาษาไทยแปลงเป็น punycode ให้ (2) **ต้องมีอยู่จริง** — `ivjowsefhvwieh.com` รูปแบบถูกแต่ DNS
+ตอบ NXDOMAIN → ตอบ "does not exist" ไม่สแกน ไม่บันทึก (เดิมเคยได้เกรด F 3/100 — ขัดหลัก "ไม่แต่งผล" จึงแก้)
+ถ้า DNS แค่ timeout จะไม่ปฏิเสธ (3) **rate limit** ต่อ IP: Single 10/นาที, Full 2/นาที, Full พร้อมกันทั้งระบบไม่เกิน 3
+→ 429 + `Retry-After` เพราะทุกสแกนไปยิงบริการภายนอก และ Full scan เรียก OpenAI ที่เสียเงิน
 
 **Q: ถ้าโดเมนมี subdomain เป็นพันตัว?**
 A: สแกนสูงสุด **25 host** (apex, www, แล้วชื่อสั้นที่สุด) + Semaphore 5 host พร้อมกัน
@@ -273,7 +280,7 @@ dashboard + W7 database ร่วม (ปรับตามจริงก่อ
 - Rubric: **TLS 30 / Headers 25 / Email 25 / DNS 20** · Grade: **95 / 85 / 75 / 60 / 40**
 - TLS เต็ม **30/30** แล้ว (strong_ciphers implement เสร็จ W8: AEAD + forward
   secrecy, ไม่มี legacy algo เช่น RC4/3DES/MD5, key ≥128 bits; TLS 1.3 ผ่านเสมอ)
-- Tests: **144** (offline ยกเว้น 4 live tests ที่ยิง google.com)
+- Tests: **186** (offline ยกเว้น 4 live tests ที่ยิง google.com)
 - Validation: **14/14** repeatable · **196/203 = 96.6%** agreement (DNS/Email 98/98, TLS 38/39, Headers 60/66; 98.0% ไม่นับ mahidol ที่บล็อก)
 - Full scan: สูงสุด **25** host, concurrency **5**, timeout **20s**/host (apex **40s + retry**),
   discovery **45s**, Geo-IP **10s**, ports **20s**, AI **30s**, ports **80/443/8080/8443/8000/3000**
