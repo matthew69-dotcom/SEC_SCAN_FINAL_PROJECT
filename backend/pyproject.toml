@@ -8,6 +8,8 @@ pythonpath = ["."]
 testpaths = ["tests"]
 # pytest-asyncio: treat every `async def test_*` as an asyncio test automatically.
 asyncio_mode = "auto"
+# Explicit so pytest-asyncio stops warning; each test gets its own event loop.
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 110
