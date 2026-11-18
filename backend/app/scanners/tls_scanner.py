@@ -26,6 +26,37 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
 from app.scanners.base import CheckResult
+from app.utils.netsafety import is_public_ip
+
+
+def _open_tcp(host: str, port: int, timeout: float) -> socket.socket:
+    """Connect to *host*:*port*, trying IPv4 addresses before IPv6.
+
+    socket.create_connection tries addresses in the OS order, which on
+    Windows puts IPv6 first. On a network without working IPv6 every AAAA
+    attempt hangs for the full timeout (measured: 8 s per address per
+    handshake, so example.com with two AAAA records cost ~32 s per TLS scan).
+    httpx avoids this with "happy eyeballs"; this scanner does not, so we
+    order IPv4 first instead. IPv4 is also the family the SSRF guard
+    (netsafety.non_public_ips) has already checked.
+
+    The reordering only applies when the name has a public address, so
+    local test servers on "localhost" keep the OS order.
+    """
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if any(is_public_ip(str(info[4][0])) for info in infos):
+        infos.sort(key=lambda info: info[0] != socket.AF_INET)  # stable: IPv4 first
+    last_err: OSError | None = None
+    for family, socktype, proto, _, addr in infos:
+        sock = socket.socket(family, socktype, proto)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(addr)
+            return sock
+        except OSError as e:
+            sock.close()
+            last_err = e
+    raise last_err or OSError(f"no addresses found for {host}")
 
 
 def _connect_and_inspect(host: str, port: int = 443, timeout: float = 8.0) -> dict:
@@ -35,7 +66,7 @@ def _connect_and_inspect(host: str, port: int = 443, timeout: float = 8.0) -> di
     # still report e.g. an expired cert as a finding). The scanner judges, not ssl.
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=timeout) as sock:
+    with _open_tcp(host, port, timeout) as sock:
         with ctx.wrap_socket(sock, server_hostname=host) as ssock:
             cert_der = ssock.getpeercert(binary_form=True)
             protocol = ssock.version()
@@ -59,7 +90,7 @@ def _verify_chain(host: str, port: int = 443, timeout: float = 8.0) -> tuple[boo
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_REQUIRED
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        with _open_tcp(host, port, timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=host):
                 return True, ""
     except ssl.SSLCertVerificationError as e:
